@@ -1,0 +1,30 @@
+# OS / editors
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+
+# Environment & secrets
+.env
+.env.*
+!.env.example
+
+# Local data (music, database, cache)
+data/
+music/
+*.db
+*.sqlite
+cache/
+logs/
+*.log
+
+# Build artifacts / dependencies
+node_modules/
+dist/
+build/
+__pycache__/
+*.pyc
+.venv/
+bin/
+tmp/
