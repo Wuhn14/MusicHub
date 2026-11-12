@@ -13,6 +13,10 @@ L'objectif est de réunir dans une seule application ce qui demande aujourd'hui 
 - une **intégration d'indexeurs** (dans l'esprit de [Prowlarr](https://github.com/Prowlarr/Prowlarr)) ;
 - un **lecteur web intégré**, et une compatibilité avec les applis mobiles existantes comme [Symfonium](https://symfonium.app/) via l'API Subsonic/OpenSubsonic.
 
+## Preuve de concept
+
+Ce dépôt contient pour l'instant une petite **preuve de concept** qui montre à quoi ressemble l'idée : une seule page pour chercher, demander et écouter de la musique, en pilotant des instances Navidrome, Lidarr et Prowlarr existantes. C'est une démo, pas l'architecture finale. Voir [POC.md](POC.md) pour la lancer.
+
 ## Pourquoi ?
 
 Aujourd'hui, héberger sa musique chez soi demande souvent d'installer, configurer et relier 3 ou 4 applications différentes, chacune avec son interface, sa base de données et ses réglages. MusicHub veut offrir **une seule expérience cohérente** : on ajoute un artiste, et la bibliothèque, les métadonnées et le streaming sont gérés automatiquement, avec une interface façon Spotify par-dessus.

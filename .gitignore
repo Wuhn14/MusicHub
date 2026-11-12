@@ -28,3 +28,9 @@ __pycache__/
 .venv/
 bin/
 tmp/
+
+# Local archives, keys and tooling
+*.zip
+*.pem
+*.key
+.claude/

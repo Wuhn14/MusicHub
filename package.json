@@ -1,0 +1,9 @@
+{
+  "name": "musichub",
+  "version": "1.0.0",
+  "description": "Recherche, demande (Lidarr/Prowlarr) et lecture (Navidrome) au même endroit",
+  "type": "module",
+  "main": "server.js",
+  "scripts": { "start": "node server.js" },
+  "engines": { "node": ">=20" }
+}

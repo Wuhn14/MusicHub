@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#1a2233">
+  <title>MusicHub</title>
+  <link rel="stylesheet" href="/app.css">
+</head>
+<body>
+  <div class="app">
+    <aside class="rail">
+      <div class="brand">MusicHub</div>
+      <nav id="nav" aria-label="Navigation principale">
+        <button data-view="home" class="on">Accueil</button>
+        <button data-view="search">Recherche</button>
+        <button data-view="queue">Téléchargements <span id="qcount" class="count" hidden></span></button>
+        <button data-view="sources">Sources</button>
+      </nav>
+      <div id="svc" class="svc" aria-live="polite"></div>
+    </aside>
+
+    <main>
+      <header class="top">
+        <input id="q" type="search" placeholder="Artiste, album ou titre" autocomplete="off" aria-label="Rechercher">
+      </header>
+      <div id="view" class="view"></div>
+    </main>
+  </div>
+
+  <footer class="player" id="player" aria-label="Lecteur">
+    <div class="now">
+      <div class="sleeve-wrap" id="sleeveWrap">
+        <div class="disc" aria-hidden="true"></div>
+        <img id="pcover" class="sleeve" alt="" hidden>
+        <div id="pcoverFallback" class="sleeve ph"></div>
+      </div>
+      <div class="meta">
+        <div id="ptitle" class="ptitle">Rien en lecture</div>
+        <div id="partist" class="partist">Choisis un album pour commencer</div>
+      </div>
+    </div>
+    <div class="ctrl">
+      <div class="btns">
+        <button id="prev" aria-label="Précédent">⏮</button>
+        <button id="play" class="big" aria-label="Lecture">▶</button>
+        <button id="next" aria-label="Suivant">⏭</button>
+      </div>
+      <div class="seek">
+        <span id="tcur">0:00</span>
+        <input id="seek" type="range" min="0" max="1000" value="0" aria-label="Position">
+        <span id="tdur">0:00</span>
+      </div>
+    </div>
+    <div class="vol">
+      <input id="vol" type="range" min="0" max="100" value="80" aria-label="Volume">
+    </div>
+    <audio id="audio" preload="metadata"></audio>
+  </footer>
+
+  <dialog id="sheet" class="sheet"></dialog>
+  <div id="toast" role="status" aria-live="polite"></div>
+
+  <script src="/app.js" type="module"></script>
+</body>
+</html>
