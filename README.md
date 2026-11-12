@@ -13,6 +13,10 @@ It aims to bring together, in a single app, what today requires several separate
 - **indexer integration** (in the spirit of [Prowlarr](https://github.com/Prowlarr/Prowlarr)),
 - a **built-in web player**, plus compatibility with existing mobile clients such as [Symfonium](https://symfonium.app/) through the Subsonic/OpenSubsonic API.
 
+## Proof of concept
+
+This repository currently contains a small **proof of concept** that shows what the idea looks like: a single page to search, request and listen to music, driving existing Navidrome, Lidarr and Prowlarr instances. It is a demo, not the final architecture. See [POC.md](POC.md) (in French) to run it.
+
 ## Why?
 
 Self-hosting music today usually means installing, configuring and wiring together 3 or 4 different applications, each with its own interface, database and settings. MusicHub's goal is a **single, coherent experience**: add an artist, and the library, metadata, and streaming are handled for you, with a Spotify-like interface on top.

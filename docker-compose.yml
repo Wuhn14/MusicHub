@@ -1,0 +1,8 @@
+services:
+  musichub:
+    build: .
+    container_name: musichub
+    restart: unless-stopped
+    ports:
+      - "8090:8080"   # change 8090 si ce port est déjà pris sur ton NAS
+    env_file: .env
