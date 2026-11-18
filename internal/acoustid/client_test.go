@@ -68,12 +68,15 @@ func TestLookupParsesMatches(t *testing.T) {
 
 func TestLookupBadKey(t *testing.T) {
 	c, srv := newTestClient(t, 0)
-	_, err := c.Lookup(context.Background(), acoustidtest.BadKey, "fp", 10)
-	if !errors.Is(err, ErrBadKey) {
-		t.Fatalf("err = %v, want ErrBadKey", err)
-	}
-	if srv.Requests() != 1 {
-		t.Errorf("a bad key must not be retried: %d requests", srv.Requests())
+	for _, key := range []string{acoustidtest.BadKey, acoustidtest.BadKey200} {
+		before := srv.Requests()
+		_, err := c.Lookup(context.Background(), key, "fp", 10)
+		if !errors.Is(err, ErrBadKey) {
+			t.Fatalf("key %s: err = %v, want ErrBadKey", key, err)
+		}
+		if srv.Requests() != before+1 {
+			t.Errorf("a bad key must not be retried: %d requests", srv.Requests()-before)
+		}
 	}
 }
 
@@ -120,18 +123,30 @@ func TestLookupKeyNotLogged(t *testing.T) {
 
 	c, srv := newTestClient(t, 0)
 	var errs []string
-	_, err := c.Lookup(context.Background(), acoustidtest.BadKey, "fp", 10)
-	errs = append(errs, err.Error())
+
+	// Service trouble: the secret key is used on a call that fails.
 	srv.FailNext(100)
-	_, err = c.Lookup(context.Background(), key, "fp", 10)
+	_, err := c.Lookup(context.Background(), key, "fp", 10)
+	if !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("err = %v, want ErrUnavailable", err)
+	}
 	errs = append(errs, err.Error())
 	// The key travels in the body, never in the URL.
 	if strings.Contains(srv.Last().Path, key) {
 		t.Error("key in URL path")
 	}
+	srv.FailNext(0)
+
+	// A refused key is reported without the key.
+	_, err = c.Lookup(context.Background(), acoustidtest.BadKey, "fp", 10)
+	errs = append(errs, err.Error())
+
 	// An unreachable server: the transport error must not leak the key.
 	srv.Close()
 	_, err = c.Lookup(context.Background(), key, "fp", 10)
+	if err == nil {
+		t.Fatal("expected an error")
+	}
 	errs = append(errs, err.Error())
 
 	for _, s := range append(errs, logs.String()) {

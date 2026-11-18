@@ -301,7 +301,7 @@ func TestFindRecordingsFieldedAndEscaped(t *testing.T) {
 	if last.Path != "/recording" {
 		t.Errorf("path = %q", last.Path)
 	}
-	want := `recording:"Glass\Tide" AND artist:"Lumen \"Harbor\"" AND release:"Paper Lanterns"`
+	want := `recording:"Glass\\Tide" AND artist:"Lumen \"Harbor\"" AND release:"Paper Lanterns"`
 	if got := last.Query.Get("query"); got != want {
 		t.Errorf("query = %s, want %s", got, want)
 	}
@@ -324,6 +324,26 @@ func TestFindRecordingsFieldedAndEscaped(t *testing.T) {
 	}
 	if hits[1].Score != 62 || len(hits[1].Releases) != 0 {
 		t.Errorf("second hit = %+v", hits[1])
+	}
+
+	// A trailing backslash must not escape the closing quote.
+	if _, err := c.FindRecordings(context.Background(), RecordingQuery{Artist: "AC\\", Title: "T"}, 3); err != nil {
+		t.Fatal(err)
+	}
+	if got := srv.Last().Query.Get("query"); got != `recording:"T" AND artist:"AC\\"` {
+		t.Errorf("trailing backslash: query = %s", got)
+	}
+
+	// Empty title or artist: no request at all.
+	before := srv.Requests()
+	for _, q := range []RecordingQuery{{Artist: "A"}, {Title: "T"}} {
+		hits, err := c.FindRecordings(context.Background(), q, 3)
+		if err != nil || len(hits) != 0 {
+			t.Errorf("%+v: hits=%v err=%v", q, hits, err)
+		}
+	}
+	if srv.Requests() != before {
+		t.Error("empty title or artist must not call MusicBrainz")
 	}
 
 	// Without an album there is no release clause.

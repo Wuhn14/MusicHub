@@ -28,13 +28,16 @@ var (
 	ErrUnavailable = errors.New("acoustid: service unavailable")
 )
 
-const maxRetries = 3
+const (
+	maxRetries = 3
+	// maxBody caps the decoded response size.
+	maxBody = 5 << 20
+)
 
-// AcoustID error codes (https://acoustid.org/webservice).
+// codeInvalidKey is the AcoustID error code for a refused API key. Other
+// codes are not interpreted: retries depend on the HTTP status only.
 const (
 	codeInvalidKey = 4
-	codeInternal   = 5
-	codeRateLimit  = 6
 )
 
 // RGRef is a release group a recording appears on.
@@ -184,7 +187,7 @@ func (c *Client) do(ctx context.Context, body, key string) (jsonResponse, bool, 
 	}
 	// AcoustID answers errors with a 4xx status and a JSON body: decode before
 	// judging the status.
-	decErr := json.NewDecoder(resp.Body).Decode(&out)
+	decErr := json.NewDecoder(io.LimitReader(resp.Body, maxBody)).Decode(&out)
 	if decErr != nil && ctx.Err() != nil {
 		return out, false, ctx.Err()
 	}
@@ -192,8 +195,6 @@ func (c *Client) do(ctx context.Context, body, key string) (jsonResponse, bool, 
 		switch out.Error.Code {
 		case codeInvalidKey:
 			return out, false, ErrBadKey
-		case codeInternal, codeRateLimit:
-			return out, true, ErrUnavailable
 		}
 		return out, false, fmt.Errorf("acoustid: error %d: %s", out.Error.Code, redactString(out.Error.Message, key))
 	}

@@ -19,8 +19,10 @@ import (
 )
 
 const (
-	// BadKey is the API key the fake refuses with error code 4.
-	BadKey = "invalid-key"
+	// BadKey is the API key the fake refuses with error code 4 and HTTP 400,
+	// like the real service; BadKey200 gets the same error body with HTTP 200.
+	BadKey    = "invalid-key"
+	BadKey200 = "invalid-key-200"
 
 	// FingerprintGlassTide matches two results (lowest score listed first, to
 	// check sorting): the recording Glass Tide with 0.97 and an unrelated
@@ -107,8 +109,15 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	if r.PostForm.Get("client") == BadKey {
-		writeJSON(w, map[string]any{"status": "error", "error": map[string]any{"code": 4, "message": "invalid API key"}})
+	switch r.PostForm.Get("client") {
+	case BadKey, BadKey200:
+		status := http.StatusBadRequest
+		if r.PostForm.Get("client") == BadKey200 {
+			status = http.StatusOK
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(status)
+		_ = json.NewEncoder(w).Encode(map[string]any{"status": "error", "error": map[string]any{"code": 4, "message": "invalid API key"}})
 		return
 	}
 	results := []map[string]any{}

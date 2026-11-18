@@ -541,6 +541,9 @@ func (r jsonRecording) hit() RecordingHit {
 // FindRecordings searches recordings by artist, title and optionally album
 // (a fielded query; values are matched as phrases), best score first.
 func (c *Client) FindRecordings(ctx context.Context, q RecordingQuery, limit int) ([]RecordingHit, error) {
+	if strings.TrimSpace(q.Title) == "" || strings.TrimSpace(q.Artist) == "" {
+		return []RecordingHit{}, nil
+	}
 	query := `recording:"` + escapePhrase(q.Title) + `" AND artist:"` + escapePhrase(q.Artist) + `"`
 	if q.Album != "" {
 		query += ` AND release:"` + escapePhrase(q.Album) + `"`
