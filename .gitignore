@@ -21,7 +21,7 @@ logs/
 
 # Build artifacts / dependencies
 node_modules/
-dist/
+/dist/
 build/
 __pycache__/
 *.pyc
@@ -34,3 +34,12 @@ tmp/
 *.pem
 *.key
 .claude/
+
+# Go / generated UI
+/data/
+/music/
+web/node_modules/
+internal/web/dist/*
+!internal/web/dist/.gitkeep
+/musichub
+/musichub.exe
