@@ -186,9 +186,9 @@
     gap: 12px;
     margin-bottom: 16px;
     padding: 10px 14px;
-    border-left: 3px solid var(--accent);
+    border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
     border-radius: var(--radius);
-    background: var(--surface);
+    background: color-mix(in srgb, var(--accent) 8%, var(--bg-elevated));
   }
 
   .dismiss {

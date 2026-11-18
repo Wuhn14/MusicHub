@@ -60,6 +60,8 @@ type Deps struct {
 	IdentifyActions IdentifyActions
 	IdentifyStore   IdentifyStore
 	LocalCoversDir  string
+	// IncomingDir is where uploads wait; only files inside it can be deleted.
+	IncomingDir string
 }
 
 type api struct {
@@ -73,16 +75,18 @@ type api struct {
 	uploads  UploadReceiver
 	files    FileReader
 
-	idActions IdentifyActions
-	idStore   IdentifyStore
-	coversDir string
+	idActions   IdentifyActions
+	idStore     IdentifyStore
+	coversDir   string
+	incomingDir string
 }
 
 // NewAPI returns the handler serving every /api route.
 func NewAPI(d Deps) http.Handler {
 	a := &api{cat: d.Catalog, covers: d.Covers, settings: d.Settings, tools: d.Tools, lib: d.Library,
 		avail: d.Availability, identify: d.Identify, uploads: d.Upload, files: d.Files,
-		idActions: d.IdentifyActions, idStore: d.IdentifyStore, coversDir: d.LocalCoversDir}
+		idActions: d.IdentifyActions, idStore: d.IdentifyStore, coversDir: d.LocalCoversDir,
+		incomingDir: d.IncomingDir}
 	canAct := d.IdentifyActions != nil && d.IdentifyStore != nil
 	hasCovers := d.IdentifyStore != nil && d.LocalCoversDir != ""
 	mux := http.NewServeMux()

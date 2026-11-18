@@ -49,10 +49,6 @@ type RecordingGetter interface {
 	GetRecording(ctx context.Context, id string) (musicbrainz.RecordingHit, error)
 }
 
-// renameFile moves a file; tests replace it to simulate a move between two
-// disks, where renaming fails.
-var renameFile = os.Rename
-
 // Organizer files identified and local tracks into the music folder:
 // <music>/<Album artist>/<Album> (<year>)/<NN> - <Title>.<ext>.
 type Organizer struct {
@@ -102,6 +98,8 @@ type placement struct {
 // source, and on any failure the file stays where it was (still playable)
 // and an error is returned. A failure to write the tags is only logged.
 func (o *Organizer) Place(ctx context.Context, fileID string) (store.File, error) {
+	// The MusicBrainz lookup can be slow: done before taking the lock.
+	rec := o.recording(ctx, fileID)
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	f, err := o.st.GetFile(ctx, fileID)
@@ -124,7 +122,7 @@ func (o *Organizer) Place(ctx context.Context, fileID string) (store.File, error
 	if !move && !writeTags {
 		return f, nil
 	}
-	p, err := o.describe(ctx, f)
+	p, err := o.describe(ctx, f, rec)
 	if err != nil {
 		return f, err
 	}
@@ -158,7 +156,7 @@ func (o *Organizer) Place(ctx context.Context, fileID string) (store.File, error
 	if err != nil {
 		return f, fmt.Errorf("reading placed file: %w", err)
 	}
-	if err := o.st.FinishPlacing(ctx, f.ID, info.Size(), info.ModTime(), written, o.now()); err != nil {
+	if err := o.st.FinishPlacing(context.WithoutCancel(ctx), f.ID, info.Size(), info.ModTime(), written, o.now()); err != nil {
 		return f, err
 	}
 	return o.st.GetFile(ctx, f.ID)
@@ -199,9 +197,34 @@ func (o *Organizer) PlaceStranded(ctx context.Context, incomingDir string) int {
 	return moved
 }
 
+// recording returns the MusicBrainz recording an identified file is linked
+// to: the one the caller already fetched (musicbrainz.WithRecording), or a
+// lookup through Recordings. nil when unknown; the tags then name the file.
+func (o *Organizer) recording(ctx context.Context, fileID string) *musicbrainz.RecordingHit {
+	f, err := o.st.GetFile(ctx, fileID)
+	if err != nil || f.Status != store.FileIdentified || f.RecordingID == "" {
+		return nil
+	}
+	if hit, ok := musicbrainz.RecordingFrom(ctx, f.RecordingID); ok {
+		return &hit
+	}
+	if o.Recordings == nil {
+		return nil
+	}
+	rctx, cancel := context.WithTimeout(ctx, recordingTimeout)
+	defer cancel()
+	hit, err := o.Recordings.GetRecording(rctx, f.RecordingID)
+	if err != nil {
+		slog.Warn("rangement : enregistrement illisible sur MusicBrainz, tags du fichier gardés", "file", f.ID, "err", err)
+		return nil
+	}
+	return &hit
+}
+
 // describe gathers the title, artists, album and tags of a file from the
-// catalog (identified files) or from its local track.
-func (o *Organizer) describe(ctx context.Context, f store.File) (placement, error) {
+// catalog (identified files), the recording rec (when not nil) or its local
+// track.
+func (o *Organizer) describe(ctx context.Context, f store.File, rec *musicbrainz.RecordingHit) (placement, error) {
 	var p placement
 	switch f.Status {
 	case store.FileLocal:
@@ -236,20 +259,12 @@ func (o *Organizer) describe(ctx context.Context, f store.File) (placement, erro
 				return p, fmt.Errorf("reading album: %w", err)
 			}
 		}
-		if o.Recordings != nil && f.RecordingID != "" {
-			rctx, cancel := context.WithTimeout(ctx, recordingTimeout)
-			hit, err := o.Recordings.GetRecording(rctx, f.RecordingID)
-			cancel()
-			switch {
-			case err != nil:
-				slog.Warn("rangement : enregistrement illisible sur MusicBrainz, tags du fichier gardés", "file", f.ID, "err", err)
-			default:
-				if t := strings.TrimSpace(hit.Title); t != "" && !p.titleFromAlbum {
-					p.title = t
-				}
-				if a := strings.TrimSpace(hit.ArtistName); a != "" {
-					p.artist = a
-				}
+		if rec != nil && rec.RecordingID == f.RecordingID {
+			if t := strings.TrimSpace(rec.Title); t != "" && !p.titleFromAlbum {
+				p.title = t
+			}
+			if a := strings.TrimSpace(rec.ArtistName); a != "" {
+				p.artist = a
 			}
 		}
 		p.tags.MBRecordingID = f.RecordingID
@@ -328,20 +343,28 @@ func (o *Organizer) moveInto(ctx context.Context, f store.File, p placement) (st
 		} else if !errors.Is(err, fs.ErrNotExist) {
 			return "", err
 		}
-		// Record the destination first: a scan that finds the file there
-		// then knows it, instead of adding it a second time.
-		if err := o.st.SetFilePath(ctx, f.ID, dst); errors.Is(err, store.ErrPathTaken) {
+		// Record the destination first, with the source: a scan that finds
+		// the file there then knows it instead of adding it a second time,
+		// and a stop during the move is repaired at the next start
+		// (RepairPlacing).
+		if err := o.st.BeginPlacing(ctx, f.ID, dst, f.Path); errors.Is(err, store.ErrPathTaken) {
 			continue
 		} else if err != nil {
 			return "", err
 		}
-		if err := moveFile(f.Path, dst); err != nil {
-			if rerr := o.st.SetFilePath(context.WithoutCancel(ctx), f.ID, f.Path); rerr != nil {
-				slog.Error("rangement : chemin d'origine non restauré en base", "file", f.ID, "path", f.Path, "err", rerr)
-			}
+		err := moveFile(f.Path, dst)
+		if err == nil {
+			return dst, nil
+		}
+		if rerr := o.st.SetFilePath(context.WithoutCancel(ctx), f.ID, f.Path); rerr != nil {
+			slog.Error("rangement : chemin d'origine non restauré en base", "file", f.ID, "path", f.Path, "err", rerr)
 			return "", fmt.Errorf("moving file: %w", err)
 		}
-		return dst, nil
+		if errors.Is(err, fs.ErrExist) {
+			// The destination appeared meanwhile: try the next name.
+			continue
+		}
+		return "", fmt.Errorf("moving file: %w", err)
 	}
 	return "", fmt.Errorf("no free name for %s in %s", stem, dir)
 }
@@ -369,19 +392,50 @@ func inPlace(path, dir, stem, ext string) bool {
 	return err == nil && n > 1
 }
 
-// moveFile moves src to dst, which must not exist. A rename is tried first;
-// when it fails (another disk), the file is copied next to dst, synced,
-// checked and renamed into place, and only then is src removed. On failure
-// src is left untouched and no partial file remains.
-func moveFile(src, dst string) error {
-	rerr := renameFile(src, dst)
-	if rerr == nil {
+// Hooks replaced by tests to simulate other filesystems.
+var (
+	// linkFile gives a file a second name, failing when newname exists.
+	linkFile = os.Link
+	// renameFile moves a file (replacing newname on some systems).
+	renameFile = os.Rename
+)
+
+// placeNoReplace gives src the name dst without ever replacing an existing
+// dst (an error matching fs.ErrExist then). A hard link does it atomically;
+// where links are not supported, dst is checked right before a rename. Any
+// other failure (another disk, for instance) is returned as is.
+func placeNoReplace(src, dst string) error {
+	lerr := linkFile(src, dst)
+	if lerr == nil {
+		if err := os.Remove(src); err != nil {
+			// dst is complete; only the old name is left behind.
+			slog.Warn("rangement : ancien nom non supprimé", "path", src, "err", err)
+		}
 		return nil
 	}
-	if _, err := os.Lstat(src); err != nil {
-		return rerr
+	if errors.Is(lerr, fs.ErrExist) {
+		return lerr
 	}
-	slog.Debug("rangement : renommage impossible, copie", "from", src, "to", dst, "err", rerr)
+	if _, err := os.Lstat(dst); err == nil {
+		return fmt.Errorf("%s: %w", dst, fs.ErrExist)
+	}
+	return renameFile(src, dst)
+}
+
+// moveFile moves src to dst without replacing an existing dst (an error
+// matching fs.ErrExist). When the file cannot be renamed (another disk), it
+// is copied next to dst, synced, checked and given its name, and only then
+// is src removed. On failure src is left untouched and no partial file
+// remains.
+func moveFile(src, dst string) error {
+	merr := placeNoReplace(src, dst)
+	if merr == nil || errors.Is(merr, fs.ErrExist) {
+		return merr
+	}
+	if _, err := os.Lstat(src); err != nil {
+		return merr
+	}
+	slog.Debug("rangement : renommage impossible, copie", "from", src, "to", dst, "err", merr)
 	if err := copyInto(src, dst); err != nil {
 		return err
 	}
@@ -392,8 +446,12 @@ func moveFile(src, dst string) error {
 	return nil
 }
 
+// tempPrefixes start the names of the temporary files the organizer and the
+// tag writer create next to their destination while they work.
+var tempPrefixes = []string{".musichub-move-", ".musichub-tags-"}
+
 // copyInto copies src to dst through a hidden temporary file in dst's folder
-// (the scanner skips hidden files) and refuses to overwrite dst.
+// (the scanner skips hidden files) and never replaces dst.
 func copyInto(src, dst string) error {
 	in, err := os.Open(src)
 	if err != nil {
@@ -404,17 +462,14 @@ func copyInto(src, dst string) error {
 	if err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(filepath.Dir(dst), ".musichub-move-*"+filepath.Ext(dst))
+	tmp, err := os.CreateTemp(filepath.Dir(dst), tempPrefixes[0]+"*"+filepath.Ext(dst))
 	if err != nil {
 		return err
 	}
 	tmpPath := tmp.Name()
-	ok := false
 	defer func() {
-		if !ok {
-			tmp.Close()
-			os.Remove(tmpPath)
-		}
+		tmp.Close()
+		os.Remove(tmpPath) // already gone once it took dst's name
 	}()
 	n, err := io.Copy(tmp, in)
 	if err != nil {
@@ -438,14 +493,80 @@ func copyInto(src, dst string) error {
 	}
 	_ = os.Chmod(tmpPath, info.Mode().Perm())
 	_ = os.Chtimes(tmpPath, info.ModTime(), info.ModTime())
-	if _, err := os.Lstat(dst); err == nil {
-		return fmt.Errorf("%s: %w", dst, fs.ErrExist)
-	}
-	if err := os.Rename(tmpPath, dst); err != nil {
+	return placeNoReplace(tmpPath, dst)
+}
+
+// RepairPlacing settles the moves a stop interrupted. Call it at startup,
+// before the first scan. A row whose destination holds the file (same size as
+// recorded, or the source is gone) keeps it; a row whose source still exists
+// goes back to it, and PlaceStranded moves it again. The temporary files left
+// in the music folder are removed.
+func (o *Organizer) RepairPlacing(ctx context.Context) error {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	files, err := o.st.ListPlacing(ctx)
+	if err != nil {
 		return err
 	}
-	ok = true
-	return nil
+	for _, f := range files {
+		dstInfo, derr := os.Stat(f.Path)
+		_, serr := os.Stat(f.PlacingFrom)
+		srcGone := errors.Is(serr, fs.ErrNotExist)
+		switch {
+		case derr == nil && (dstInfo.Size() == f.Size || srcGone):
+			if err := o.st.FinishPlacing(ctx, f.ID, dstInfo.Size(), dstInfo.ModTime(), nil, o.now()); err != nil {
+				return err
+			}
+			if serr == nil {
+				// The copy was complete but the source not removed yet.
+				if err := os.Remove(f.PlacingFrom); err != nil {
+					slog.Warn("rangement interrompu : ancien fichier non supprimé", "path", f.PlacingFrom, "err", err)
+				}
+			}
+			slog.Info("rangement interrompu terminé", "file", f.ID, "path", f.Path)
+		case serr == nil:
+			if err := o.st.SetFilePath(ctx, f.ID, f.PlacingFrom); err != nil {
+				return err
+			}
+			slog.Info("rangement interrompu annulé, le fichier sera rangé à nouveau", "file", f.ID, "path", f.PlacingFrom)
+		default:
+			slog.Error("rangement interrompu : fichier introuvable", "file", f.ID, "path", f.Path, "from", f.PlacingFrom)
+		}
+	}
+	n, err := removeTemps(o.musicDir)
+	if n > 0 {
+		slog.Info("fichiers temporaires de rangement supprimés", "count", n)
+	}
+	return err
+}
+
+// removeTemps deletes the leftover temporary files of the organizer and the
+// tag writer under root and returns how many it removed.
+func removeTemps(root string) (int, error) {
+	n := 0
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			if path == root {
+				return err
+			}
+			return nil // an unreadable folder is skipped
+		}
+		if d.IsDir() {
+			return nil
+		}
+		for _, p := range tempPrefixes {
+			if strings.HasPrefix(d.Name(), p) {
+				if rerr := os.Remove(path); rerr != nil {
+					slog.Warn("fichier temporaire non supprimé", "path", path, "err", rerr)
+				} else {
+					n++
+				}
+				break
+			}
+		}
+		return nil
+	})
+	return n, err
 }
 
 // windowsReserved are the device names Windows refuses as file names, with

@@ -307,11 +307,36 @@ func TestOrganizeWritesTagsForUploads(t *testing.T) {
 	}
 }
 
+// fsHooks replaces the link and rename functions for one test.
+func fsHooks(t *testing.T, link, rename func(string, string) error) {
+	t.Helper()
+	ol, or := linkFile, renameFile
+	t.Cleanup(func() { linkFile, renameFile = ol, or })
+	if link != nil {
+		linkFile = link
+	}
+	if rename != nil {
+		renameFile = rename
+	}
+}
+
+var errCrossDevice = errors.New("invalid cross-device link")
+
+// isTemp tells the organizer's temporary copies apart.
+func isTemp(path string) bool { return strings.HasPrefix(filepath.Base(path), ".musichub-move-") }
+
 func TestOrganizeCopiesAcrossDisks(t *testing.T) {
 	e := newOrgEnv(t, nil)
-	orig := renameFile
-	t.Cleanup(func() { renameFile = orig })
-	renameFile = func(string, string) error { return &os.LinkError{Op: "rename", Err: errors.New("cross-device link")} }
+	// Another disk: the source cannot be linked nor renamed; the temporary
+	// copy (same folder as the destination) can.
+	fsHooks(t,
+		func(o, n string) error {
+			if isTemp(o) {
+				return os.Link(o, n)
+			}
+			return &os.LinkError{Op: "link", Old: o, New: n, Err: errCrossDevice}
+		},
+		func(o, n string) error { return &os.LinkError{Op: "rename", Old: o, New: n, Err: errCrossDevice} })
 
 	payload := strings.Repeat("0123456789", 10000)
 	f := e.upload(t, payload)
@@ -323,17 +348,18 @@ func TestOrganizeCopiesAcrossDisks(t *testing.T) {
 	if _, err := os.Stat(f.Path); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("source kept after a verified copy: %v", err)
 	}
+	if got.PlacingFrom != "" {
+		t.Errorf("move still recorded as in progress: %q", got.PlacingFrom)
+	}
 	assertNoTemp(t, filepath.Dir(got.Path))
 
-	// When the copy cannot complete (here, someone creates the destination
-	// meanwhile), the source stays, nothing is overwritten and the row keeps
-	// its old path.
+	// When the copy cannot get its name (links and renames both fail), the
+	// source stays, no temporary file is left and the row keeps its path.
+	fsHooks(t,
+		func(o, n string) error { return &os.LinkError{Op: "link", Old: o, New: n, Err: errCrossDevice} },
+		func(o, n string) error { return &os.LinkError{Op: "rename", Old: o, New: n, Err: errors.New("denied")} })
 	g := e.upload(t, "precious")
 	e.makeLocal(t, g, store.LocalTrack{Title: "Gardé", Artist: "Ailleurs"})
-	renameFile = func(_, dst string) error {
-		os.WriteFile(dst, []byte("other"), 0o644)
-		return errors.New("cross-device link")
-	}
 	if _, err := e.org.Place(context.Background(), g.ID); err == nil {
 		t.Fatal("Place succeeded")
 	}
@@ -341,13 +367,110 @@ func TestOrganizeCopiesAcrossDisks(t *testing.T) {
 		t.Error("source lost")
 	}
 	dst := filepath.Join(e.music, "Ailleurs", "Titres sans album", "Gardé.mp3")
-	if readFile(t, dst) != "other" {
-		t.Error("destination overwritten")
+	if _, err := os.Stat(dst); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("partial destination: %v", err)
 	}
-	if row, _ := e.st.GetFile(context.Background(), g.ID); row.Path != g.Path {
-		t.Errorf("row path = %q, want %q", row.Path, g.Path)
+	if row, _ := e.st.GetFile(context.Background(), g.ID); row.Path != g.Path || row.PlacingFrom != "" {
+		t.Errorf("row path = %q (from %q), want %q", row.Path, row.PlacingFrom, g.Path)
 	}
 	assertNoTemp(t, filepath.Dir(dst))
+}
+
+func TestOrganizeNeverReplacesAppearingDestination(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		link func(string, string) error
+	}{
+		// Links work: the link itself refuses the existing name.
+		{"link", nil},
+		// No links on this filesystem: the check before the rename refuses it.
+		{"no link", func(o, n string) error {
+			return &os.LinkError{Op: "link", Old: o, New: n, Err: errors.New("operation not permitted")}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newOrgEnv(t, nil)
+			dst := filepath.Join(e.music, "Moi", "Titres sans album", "Course.mp3")
+			created := false
+			inner := tc.link
+			if inner == nil {
+				inner = os.Link
+			}
+			// Someone else writes the destination right before the move.
+			fsHooks(t, func(o, n string) error {
+				if !created && n == dst {
+					created = true
+					os.WriteFile(dst, []byte("theirs"), 0o644)
+				}
+				return inner(o, n)
+			}, nil)
+			f := e.upload(t, "mine")
+			e.makeLocal(t, f, store.LocalTrack{Title: "Course", Artist: "Moi"})
+			got := e.place(t, f.ID)
+			if readFile(t, dst) != "theirs" {
+				t.Error("destination replaced")
+			}
+			if want := filepath.Join(filepath.Dir(dst), "Course (2).mp3"); got.Path != want || readFile(t, want) != "mine" {
+				t.Errorf("placed at %q", got.Path)
+			}
+		})
+	}
+}
+
+func TestRepairPlacingAfterCrash(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("source still there", func(t *testing.T) {
+		e := newOrgEnv(t, nil)
+		f := e.upload(t, "audio")
+		e.makeLocal(t, f, store.LocalTrack{Title: "Coupé", Artist: "Moi"})
+		dst := filepath.Join(e.music, "Moi", "Titres sans album", "Coupé.mp3")
+		// The process stops right after recording the move, mid-copy.
+		if err := e.st.BeginPlacing(ctx, f.ID, dst, f.Path); err != nil {
+			t.Fatal(err)
+		}
+		os.MkdirAll(filepath.Dir(dst), 0o755)
+		os.WriteFile(filepath.Join(filepath.Dir(dst), ".musichub-move-123.mp3"), []byte("aud"), 0o644)
+
+		if err := e.org.RepairPlacing(ctx); err != nil {
+			t.Fatal(err)
+		}
+		row, _ := e.st.GetFile(ctx, f.ID)
+		if row.Path != f.Path || row.PlacingFrom != "" || readFile(t, row.Path) != "audio" {
+			t.Fatalf("row = %q from %q", row.Path, row.PlacingFrom)
+		}
+		assertNoTemp(t, filepath.Dir(dst))
+		// The startup sweep places it again.
+		if n := e.org.PlaceStranded(ctx, e.incoming); n != 1 {
+			t.Errorf("re-placed = %d", n)
+		}
+		if row, _ := e.st.GetFile(ctx, f.ID); row.Path != dst || readFile(t, dst) != "audio" {
+			t.Errorf("after sweep = %q", row.Path)
+		}
+	})
+
+	t.Run("copy finished", func(t *testing.T) {
+		e := newOrgEnv(t, nil)
+		f := e.upload(t, "audio")
+		e.makeLocal(t, f, store.LocalTrack{Title: "Fini", Artist: "Moi"})
+		dst := filepath.Join(e.music, "Moi", "Titres sans album", "Fini.mp3")
+		if err := e.st.BeginPlacing(ctx, f.ID, dst, f.Path); err != nil {
+			t.Fatal(err)
+		}
+		// The copy got its name but the source was not removed yet.
+		os.MkdirAll(filepath.Dir(dst), 0o755)
+		os.WriteFile(dst, []byte("audio"), 0o644)
+		if err := e.org.RepairPlacing(ctx); err != nil {
+			t.Fatal(err)
+		}
+		row, _ := e.st.GetFile(ctx, f.ID)
+		if row.Path != dst || row.PlacingFrom != "" || row.Status != store.FileLocal {
+			t.Fatalf("row = %+v", row)
+		}
+		if _, err := os.Stat(f.Path); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("source left: %v", err)
+		}
+	})
 }
 
 func assertNoTemp(t *testing.T, dir string) {
@@ -384,19 +507,20 @@ func TestScanDoesNotDuplicateOrganizedUpload(t *testing.T) {
 	}
 
 	// A scan runs right when the file lands in the music folder.
-	orig := renameFile
-	t.Cleanup(func() { renameFile = orig })
-	renameFile = func(from, to string) error {
-		if err := os.Rename(from, to); err != nil {
+	scanning := true
+	fsHooks(t, func(from, to string) error {
+		if err := os.Link(from, to); err != nil {
 			return err
 		}
-		if _, err := scanner.Scan(ctx); err != nil {
-			t.Errorf("scan during move: %v", err)
+		if scanning {
+			if _, err := scanner.Scan(ctx); err != nil {
+				t.Errorf("scan during move: %v", err)
+			}
 		}
 		return nil
-	}
+	}, nil)
 	placed := e.place(t, f.ID)
-	renameFile = orig
+	scanning = false
 	if _, err := scanner.Scan(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -469,5 +593,30 @@ func TestOrganizeNamesIdentifiedFilesAfterTheRecording(t *testing.T) {
 	}
 	if p := e.place(t, g.ID).Path; p != filepath.Join(e.music, "Tagueur", "Titres sans album", "Du Tag.mp3") {
 		t.Errorf("fallback path = %q", p)
+	}
+}
+
+type failingRecordings struct{ t *testing.T }
+
+func (f failingRecordings) GetRecording(context.Context, string) (musicbrainz.RecordingHit, error) {
+	f.t.Error("recording looked up again")
+	return musicbrainz.RecordingHit{}, musicbrainz.ErrUnavailable
+}
+
+func TestOrganizeReusesTheFetchedRecording(t *testing.T) {
+	e := newOrgEnv(t, nil)
+	ctx := context.Background()
+	const rec = "00000000-0000-4000-8000-0000000000d7"
+	e.org.Recordings = failingRecordings{t}
+	f := e.upload(t, "x")
+	if err := e.st.LinkFile(ctx, f.ID, rec, "", 0, 0); err != nil {
+		t.Fatal(err)
+	}
+	got, err := e.org.Place(musicbrainz.WithRecording(ctx, musicbrainz.RecordingHit{RecordingID: rec, Title: "Connu", ArtistName: "Déjà"}), f.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(e.music, "Déjà", "Titres sans album", "Connu.mp3"); got.Path != want {
+		t.Errorf("path = %q, want %q", got.Path, want)
 	}
 }

@@ -100,8 +100,11 @@ func TestSetFilePathAndFinishPlacing(t *testing.T) {
 	if err := s.SetFilePath(ctx, "nope", "/m/z.mp3"); !errors.Is(err, ErrNotFound) {
 		t.Errorf("unknown err = %v", err)
 	}
-	if err := s.SetFilePath(ctx, a.ID, "/m/new/a.mp3"); err != nil {
+	if err := s.BeginPlacing(ctx, a.ID, "/m/new/a.mp3", a.Path); err != nil {
 		t.Fatal(err)
+	}
+	if list, err := s.ListPlacing(ctx); err != nil || len(list) != 1 || list[0].PlacingFrom != "/m/a.mp3" || list[0].Path != "/m/new/a.mp3" {
+		t.Fatalf("ListPlacing = %+v, %v", list, err)
 	}
 	s.SetFileStatus(ctx, a.ID, FileIdentified)
 	s.MarkMissing(ctx, t0.Add(time.Hour), t0.Add(time.Hour), "")
@@ -113,6 +116,9 @@ func TestSetFilePathAndFinishPlacing(t *testing.T) {
 	if g.Path != "/m/new/a.mp3" || g.Origin != OriginDropped || g.Status != FileIdentified || g.Size != 99 ||
 		!g.Mtime.Equal(t1) || !g.LastSeen.Equal(t1) || g.Tags.Title != "new" || g.Tags.Artist != "keep" || g.Tags.Track != 3 {
 		t.Errorf("placed = %+v", g)
+	}
+	if list, _ := s.ListPlacing(ctx); len(list) != 0 || g.PlacingFrom != "" {
+		t.Errorf("move still in progress after FinishPlacing: %+v", list)
 	}
 }
 

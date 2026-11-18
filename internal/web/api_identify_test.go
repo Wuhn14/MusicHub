@@ -58,7 +58,7 @@ func newIdentifyEnv(t *testing.T) *identifyEnv {
 	id := identify.New(identify.Deps{
 		Store: st, MB: mbc, Catalog: catalog.New(st, mbc, time.Now), Settings: set, Placer: org,
 	})
-	e.h = NewAPI(Deps{IdentifyActions: id, IdentifyStore: st, LocalCoversDir: e.covers, Files: st})
+	e.h = NewAPI(Deps{IdentifyActions: id, IdentifyStore: st, LocalCoversDir: e.covers, Files: st, IncomingDir: e.incoming})
 	return e
 }
 
@@ -219,6 +219,22 @@ func TestDeleteDroppedIs409(t *testing.T) {
 	}
 	wantError(t, send(t, e.h, "DELETE", "/api/identify/"+up.ID, ""), 404, "Introuvable.")
 	wantError(t, send(t, e.h, "DELETE", "/api/identify/zz", ""), 400, "Identifiant invalide.")
+
+	// An uploaded file outside the incoming folder is never deleted.
+	outside := filepath.Join(e.music, "envoyé.mp3")
+	os.WriteFile(outside, []byte("kept"), 0o644)
+	stray, err := e.st.InsertUploadedFile(ctx, store.File{Path: outside})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantError(t, send(t, e.h, "DELETE", "/api/identify/"+stray.ID, ""), 409,
+		"Ce fichier est dans ton dossier musique : supprime-le directement sur le disque.")
+	if _, err := os.Stat(outside); err != nil {
+		t.Errorf("file outside incoming removed: %v", err)
+	}
+	if _, err := e.st.GetFile(ctx, stray.ID); err != nil {
+		t.Errorf("row removed: %v", err)
+	}
 
 	// An uploaded file that is no longer pending stays.
 	done := e.upload(t, media.Tags{})

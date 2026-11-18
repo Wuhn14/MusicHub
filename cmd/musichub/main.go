@@ -78,6 +78,11 @@ func run() error {
 	// Identified and local files are filed into the music folder.
 	organizer := library.NewOrganizer(st, tools, cfg.MusicDir, settingsSvc)
 	organizer.Recordings = mb
+	// Moves interrupted by a stop are settled before anything reads the
+	// files (the scanner, the identification worker, the API).
+	if err := organizer.RepairPlacing(ctx); err != nil {
+		slog.Warn("réparation des rangements interrompus incomplète", "err", err)
+	}
 
 	// Identification runs in the background from a persistent job queue;
 	// the scanner queues every new or modified pending file.
@@ -138,6 +143,7 @@ func run() error {
 		Library: library.Service{Query: library.NewQuery(st), Runner: runner}, Stream: streamer,
 		Availability: st, Identify: worker, Upload: receiver, Files: st,
 		IdentifyActions: identifier, IdentifyStore: st, LocalCoversDir: filepath.Join(cfg.DataDir, "local-covers"),
+		IncomingDir: incomingDir,
 	})
 	srv := &http.Server{
 		Addr:              fmt.Sprintf(":%d", cfg.Port),

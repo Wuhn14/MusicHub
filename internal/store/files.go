@@ -45,7 +45,10 @@ type File struct {
 	LocalTrackID         string
 	// UploadName is the name an uploaded file had on the sender's device
 	// (display only, never a path); empty for dropped files.
-	UploadName     string
+	UploadName string
+	// PlacingFrom is the path a file is being moved from by the organizer
+	// ("" when no move is in progress); Path then names the destination.
+	PlacingFrom    string
 	Disc, Position int
 	LastSeen       time.Time
 	MissingSince   time.Time
@@ -62,7 +65,7 @@ type FileFilter struct {
 
 const fileCols = `id, path, origin, size, mtime, format, codec, bitrate, sample_rate,
 duration_ms, lossless, tags_json, status, recording_id, album_id, local_track_id,
-disc, position, last_seen, missing_since, added_at, upload_name`
+disc, position, last_seen, missing_since, added_at, upload_name, placing_from`
 
 func newFileID() string {
 	b := make([]byte, 16)
@@ -89,7 +92,7 @@ func scanFile(r rowScanner) (File, error) {
 	err := r.Scan(&f.ID, &f.Path, &f.Origin, &f.Size, &mtime, &f.Format, &f.Codec,
 		&f.BitRate, &f.SampleRate, &f.DurationMs, &lossless, &tags, &f.Status,
 		&f.RecordingID, &f.AlbumID, &f.LocalTrackID, &f.Disc, &f.Position,
-		&lastSeen, &missing, &added, &f.UploadName)
+		&lastSeen, &missing, &added, &f.UploadName, &f.PlacingFrom)
 	if err != nil {
 		return File{}, err
 	}
@@ -454,9 +457,21 @@ GROUP BY al.id`, artistID)
 var ErrPathTaken = errors.New("store: path already used by another file")
 
 // SetFilePath records a new path for a file, keeping its id, origin and
-// status. It returns ErrPathTaken when another row has that path and
-// ErrNotFound when the file is gone.
+// status, and forgets any move in progress. It returns ErrPathTaken when
+// another row has that path and ErrNotFound when the file is gone.
 func (s *Store) SetFilePath(ctx context.Context, id, path string) error {
+	return s.setPath(ctx, id, path, "")
+}
+
+// BeginPlacing records that a file is about to be moved from its current
+// path (from) to path: the row takes the destination path right away and
+// remembers the source until FinishPlacing or SetFilePath. Same errors as
+// SetFilePath.
+func (s *Store) BeginPlacing(ctx context.Context, id, path, from string) error {
+	return s.setPath(ctx, id, path, from)
+}
+
+func (s *Store) setPath(ctx context.Context, id, path, from string) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -469,7 +484,7 @@ func (s *Store) SetFilePath(ctx context.Context, id, path string) error {
 	if other > 0 {
 		return ErrPathTaken
 	}
-	res, err := tx.ExecContext(ctx, `UPDATE files SET path = ? WHERE id = ?`, path, id)
+	res, err := tx.ExecContext(ctx, `UPDATE files SET path = ?, placing_from = ? WHERE id = ?`, path, from, id)
 	if err != nil {
 		return err
 	}
@@ -479,10 +494,28 @@ func (s *Store) SetFilePath(ctx context.Context, id, path string) error {
 	return tx.Commit()
 }
 
+// ListPlacing returns the files whose move was started but never finished.
+func (s *Store) ListPlacing(ctx context.Context) ([]File, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT `+fileCols+` FROM files WHERE placing_from <> '' ORDER BY path`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []File
+	for rows.Next() {
+		f, err := scanFile(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, f)
+	}
+	return out, rows.Err()
+}
+
 // FinishPlacing records the state of a file right after it was moved or
 // retagged: its size and modification date as now found on the disk, the
 // tags written into it (merged over the stored ones; nil when none were
-// written) and the time it was seen. A file flagged missing meanwhile (a
+// written) and the time it was seen; the move is over. A file flagged missing meanwhile (a
 // scan ran while it was being moved) regains its previous status. With
 // matching size and date, the next scan does not read the file again.
 func (s *Store) FinishPlacing(ctx context.Context, id string, size int64, mtime time.Time, written *media.Tags, seen time.Time) error {
@@ -507,7 +540,7 @@ func (s *Store) FinishPlacing(ctx context.Context, id string, size int64, mtime 
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `
-UPDATE files SET size = ?, mtime = ?, tags_json = ?, last_seen = ?, missing_since = '',
+UPDATE files SET size = ?, mtime = ?, tags_json = ?, last_seen = ?, missing_since = '', placing_from = '',
   status = CASE WHEN status = 'missing' THEN COALESCE(NULLIF(prev_status, ''), 'pending') ELSE status END,
   prev_status = CASE WHEN status = 'missing' THEN '' ELSE prev_status END
 WHERE id = ?`, size, mtime.UnixNano(), string(tagsJSON), formatTime(seen), id); err != nil {

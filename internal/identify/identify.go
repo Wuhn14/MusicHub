@@ -207,7 +207,7 @@ func (id *Identifier) Identify(ctx context.Context, fileID string) (Result, erro
 	}
 
 	choice := chooseAlbum(m.hit.Releases, m.acoustRGs, f.Tags.MBReleaseGroupID, f.Tags.Album)
-	res, linked, err := id.link(ctx, f, m.hit.RecordingID, choice, m.source, set.Duplicates)
+	res, linked, err := id.link(ctx, f, m.hit, choice, m.source, set.Duplicates)
 	if err != nil && !linked {
 		if errors.Is(err, ErrSkipped) || errors.Is(err, store.ErrNotFound) {
 			return res, err
@@ -223,7 +223,7 @@ const SourceManual = "manual"
 // link loads the chosen album into the catalog, links the file to the
 // recording, applies the duplicates rule and places the file. linked tells
 // whether the file was linked before an error happened.
-func (id *Identifier) link(ctx context.Context, f store.File, recordingID string, choice albumChoice, source, policy string) (res Result, linked bool, err error) {
+func (id *Identifier) link(ctx context.Context, f store.File, hit musicbrainz.RecordingHit, choice albumChoice, source, policy string) (res Result, linked bool, err error) {
 	albumID := choice.id
 	if albumID != "" {
 		if _, err := id.d.Catalog.Album(ctx, albumID); err != nil {
@@ -241,10 +241,10 @@ func (id *Identifier) link(ctx context.Context, f store.File, recordingID string
 	if disc <= 0 || pos <= 0 {
 		disc, pos = f.Tags.Disc, f.Tags.Track
 	}
-	if err := id.d.Store.LinkFile(ctx, f.ID, recordingID, albumID, disc, pos); err != nil {
+	if err := id.d.Store.LinkFile(ctx, f.ID, hit.RecordingID, albumID, disc, pos); err != nil {
 		return Result{}, false, notPending(err)
 	}
-	res = Result{Status: store.FileIdentified, RecordingID: recordingID, AlbumID: albumID, Source: source}
+	res = Result{Status: store.FileIdentified, RecordingID: hit.RecordingID, AlbumID: albumID, Source: source}
 	// The file is linked: finish the duplicates step and the placing even if
 	// a shutdown starts now, so no half-resolved state is left behind.
 	after := context.WithoutCancel(ctx)
@@ -254,7 +254,8 @@ func (id *Identifier) link(ctx context.Context, f store.File, recordingID string
 	}
 	res.Duplicate = dup
 	if dup != DupDiscardedNew && dup != DupHiddenNew {
-		id.place(after, f.ID)
+		// The organizer reuses the recording instead of fetching it again.
+		id.place(musicbrainz.WithRecording(after, hit), f.ID)
 	}
 	return res, true, nil
 }
@@ -300,7 +301,7 @@ func (id *Identifier) Choose(ctx context.Context, fileID, recordingID, albumID s
 		rg = f.Tags.MBReleaseGroupID
 	}
 	choice := chooseAlbum(hit.Releases, nil, rg, f.Tags.Album)
-	res, _, err := id.link(ctx, f, hit.RecordingID, choice, SourceManual, set.Duplicates)
+	res, _, err := id.link(ctx, f, hit, choice, SourceManual, set.Duplicates)
 	if errors.Is(err, ErrSkipped) {
 		return res, store.ErrNotPending
 	}

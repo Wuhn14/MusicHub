@@ -402,29 +402,65 @@ func (a *api) saveLocalCover(trackID, ext string, data []byte) (string, error) {
 	return name, nil
 }
 
+// deletingSuffix marks an uploaded file being deleted: renamed first, so
+// nothing else can use it while its row is removed.
+const deletingSuffix = ".deleting"
+
 // identifyDelete answers DELETE /api/identify/{fileId}: an uploaded file
-// waiting for identification is deleted (row, then disk). A file dropped in
-// the music folder is never deleted by MusicHub.
+// still waiting in the incoming folder is deleted, from the disk first, then
+// from the database. A file in the music folder (dropped, or anything outside
+// the incoming folder) is never deleted by MusicHub.
 func (a *api) identifyDelete(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathFileID(w, r)
 	if !ok {
 		return
 	}
-	f, err := a.idStore.DeletePendingUpload(r.Context(), id)
-	switch {
-	case errors.Is(err, store.ErrNotUploaded):
-		writeError(w, http.StatusConflict, msgDroppedDelete)
-		return
-	case err != nil:
+	f, err := a.idStore.GetFile(r.Context(), id)
+	if err != nil {
 		failIdentify(w, r, err)
 		return
 	}
-	if err := os.Remove(f.Path); err != nil && !errors.Is(err, fs.ErrNotExist) {
+	switch {
+	case f.Origin != store.OriginUploaded || !a.inIncoming(f.Path):
+		writeError(w, http.StatusConflict, msgDroppedDelete)
+		return
+	case f.Status != store.FilePending:
+		writeError(w, http.StatusConflict, msgNotPending)
+		return
+	}
+	// Take the file out of the way first: if that fails, nothing changed.
+	tomb := f.Path + deletingSuffix
+	if err := os.Rename(f.Path, tomb); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		slog.Error("uploaded file not removed from disk", "file", f.ID, "path", f.Path, "err", err)
 		writeError(w, http.StatusInternalServerError, msgDeleteFailed)
 		return
 	}
+	if _, err := a.idStore.DeletePendingUpload(r.Context(), id); err != nil {
+		// The file changed meanwhile (identified, for instance): put it back.
+		if rerr := os.Rename(tomb, f.Path); rerr != nil && !errors.Is(rerr, fs.ErrNotExist) {
+			slog.Error("uploaded file not restored after a refused delete", "file", f.ID, "path", f.Path, "err", rerr)
+		}
+		if errors.Is(err, store.ErrNotUploaded) {
+			writeError(w, http.StatusConflict, msgDroppedDelete)
+			return
+		}
+		failIdentify(w, r, err)
+		return
+	}
+	if err := os.Remove(tomb); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		slog.Warn("deleted upload left on disk", "path", tomb, "err", err)
+	}
 	writeJSON(w, http.StatusOK, map[string]bool{"deleted": true})
+}
+
+// inIncoming reports whether path is inside the incoming folder.
+func (a *api) inIncoming(path string) bool {
+	if a.incomingDir == "" {
+		return false
+	}
+	rel, err := filepath.Rel(a.incomingDir, path)
+	return err == nil && rel != "." && !filepath.IsAbs(rel) && rel != ".." &&
+		!strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 // localCover answers GET /api/local-covers/{id}: the cover uploaded for a

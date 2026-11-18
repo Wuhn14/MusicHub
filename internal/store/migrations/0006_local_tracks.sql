@@ -19,3 +19,9 @@ CREATE INDEX files_local_track_id ON files(local_track_id);
 -- The name an uploaded file had on the sender's device (last path segment
 -- only), shown in "À identifier". Never used as a path.
 ALTER TABLE files ADD COLUMN upload_name TEXT NOT NULL DEFAULT '';
+
+-- While the organizer moves a file, the path it is moved from. The row's
+-- path already names the destination (so a scan finding the file there does
+-- not add it twice); if MusicHub stops before the move is finished, startup
+-- uses this to put the row back on the file that really exists.
+ALTER TABLE files ADD COLUMN placing_from TEXT NOT NULL DEFAULT '';
