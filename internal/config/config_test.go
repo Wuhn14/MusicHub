@@ -17,6 +17,7 @@ func TestLoadDefaults(t *testing.T) {
 		MusicDir:       "./music",
 		MusicBrainzURL: "https://musicbrainz.org/ws/2",
 		CoverArtURL:    "https://coverartarchive.org",
+		AcoustIDURL:    "https://api.acoustid.org/v2",
 		FFmpeg:         "ffmpeg",
 		FFprobe:        "ffprobe",
 		FPcalc:         "fpcalc",
@@ -28,11 +29,12 @@ func TestLoadDefaults(t *testing.T) {
 
 func TestLoadOverrides(t *testing.T) {
 	cfg, err := Load(env(map[string]string{
-		"MUSICHUB_PORT":    "9000",
-		"MUSICHUB_DATA":    "/data",
-		"MUSICHUB_MUSIC":   "/music",
-		"MUSICHUB_MB_URL":  "http://localhost:5000/ws/2",
-		"MUSICHUB_CAA_URL": "http://localhost:5001",
+		"MUSICHUB_PORT":         "9000",
+		"MUSICHUB_DATA":         "/data",
+		"MUSICHUB_MUSIC":        "/music",
+		"MUSICHUB_MB_URL":       "http://localhost:5000/ws/2",
+		"MUSICHUB_CAA_URL":      "http://localhost:5001",
+		"MUSICHUB_ACOUSTID_URL": "http://localhost:5002/v2",
 	}))
 	if err != nil {
 		t.Fatal(err)
@@ -43,6 +45,7 @@ func TestLoadOverrides(t *testing.T) {
 		MusicDir:       "/music",
 		MusicBrainzURL: "http://localhost:5000/ws/2",
 		CoverArtURL:    "http://localhost:5001",
+		AcoustIDURL:    "http://localhost:5002/v2",
 		FFmpeg:         "ffmpeg",
 		FFprobe:        "ffprobe",
 		FPcalc:         "fpcalc",

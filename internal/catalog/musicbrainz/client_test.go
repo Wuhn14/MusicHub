@@ -289,3 +289,69 @@ func TestNotFound(t *testing.T) {
 		t.Errorf("GetAlbum err = %v, want ErrNotFound", err)
 	}
 }
+
+func TestFindRecordingsFieldedAndEscaped(t *testing.T) {
+	c, srv := newTestClient(t, 0)
+	hits, err := c.FindRecordings(context.Background(),
+		RecordingQuery{Artist: `Lumen "Harbor"`, Title: `Glass\Tide`, Album: "Paper Lanterns"}, 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	last := srv.Last()
+	if last.Path != "/recording" {
+		t.Errorf("path = %q", last.Path)
+	}
+	want := `recording:"Glass\Tide" AND artist:"Lumen \"Harbor\"" AND release:"Paper Lanterns"`
+	if got := last.Query.Get("query"); got != want {
+		t.Errorf("query = %s, want %s", got, want)
+	}
+	if last.Query.Get("limit") != "7" {
+		t.Errorf("limit = %q", last.Query.Get("limit"))
+	}
+	if len(hits) != 2 {
+		t.Fatalf("got %d hits, want 2", len(hits))
+	}
+	h := hits[0]
+	if h.RecordingID != mbtest.RecordingGlassTide || h.Title != "Glass Tide" || h.ArtistName != "Lumen Harbor feat. Mira Vale" ||
+		h.LengthMs != 201000 || h.Score != 100 || len(h.Releases) != 1 {
+		t.Fatalf("hit = %+v", h)
+	}
+	r := h.Releases[0]
+	if r.ReleaseGroupID != mbtest.AlbumTwoDisc || r.Title != "Paper Lanterns" || r.PrimaryType != "Album" ||
+		len(r.SecondaryTypes) != 1 || r.SecondaryTypes[0] != "Compilation" || r.Date != "2003-05-12" ||
+		r.Disc != 2 || r.Position != 3 {
+		t.Errorf("release = %+v", r)
+	}
+	if hits[1].Score != 62 || len(hits[1].Releases) != 0 {
+		t.Errorf("second hit = %+v", hits[1])
+	}
+
+	// Without an album there is no release clause.
+	if _, err := c.FindRecordings(context.Background(), RecordingQuery{Artist: "A", Title: "T"}, 3); err != nil {
+		t.Fatal(err)
+	}
+	if got := srv.Last().Query.Get("query"); got != `recording:"T" AND artist:"A"` {
+		t.Errorf("query = %s", got)
+	}
+}
+
+func TestGetRecordingReleases(t *testing.T) {
+	c, srv := newTestClient(t, 0)
+	h, err := c.GetRecording(context.Background(), mbtest.RecordingGlassTide)
+	if err != nil {
+		t.Fatal(err)
+	}
+	last := srv.Last()
+	if last.Path != "/recording/"+mbtest.RecordingGlassTide || last.Query.Get("inc") != "releases release-groups artist-credits media" {
+		t.Errorf("request = %s ?%v", last.Path, last.Query)
+	}
+	if h.Title != "Glass Tide" || h.ArtistName != "Lumen Harbor feat. Mira Vale" || h.LengthMs != 201000 || len(h.Releases) != 1 {
+		t.Fatalf("hit = %+v", h)
+	}
+	if r := h.Releases[0]; r.ReleaseGroupID != mbtest.AlbumTwoDisc || r.Disc != 2 || r.Position != 3 || r.Date != "2003-05-12" {
+		t.Errorf("release = %+v", r)
+	}
+	if _, err := c.GetRecording(context.Background(), "00000000-0000-4000-8000-00000000ffff"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("unknown recording: err = %v, want ErrNotFound", err)
+	}
+}

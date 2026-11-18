@@ -1,5 +1,6 @@
 // Command fakemb serves invented MusicBrainz data for development and
-// end-to-end tests. Point MUSICHUB_MB_URL and MUSICHUB_CAA_URL at it.
+// end-to-end tests. Point MUSICHUB_MB_URL and MUSICHUB_CAA_URL at it, and
+// MUSICHUB_ACOUSTID_URL at its /acoustid/v2 path (fake AcoustID, see acoustidtest).
 package main
 
 import (
@@ -10,8 +11,10 @@ import (
 	"os"
 	"os/signal"
 	"regexp"
+	"strings"
 	"syscall"
 
+	"github.com/Wuhn14/MusicHub/internal/acoustid/acoustidtest"
 	"github.com/Wuhn14/MusicHub/internal/catalog/mbtest"
 )
 
@@ -23,12 +26,19 @@ func main() {
 
 	fake := mbtest.New()
 	defer fake.Close()
+	fakeAcoustID := acoustidtest.New()
+	defer fakeAcoustID.Close()
+	acoustid := fakeAcoustID.Handler()
 
 	// Cover Art Archive has no covers for invented albums: answer 404 so the
 	// same server can be used for MUSICHUB_CAA_URL.
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if coverPath.MatchString(r.URL.Path) {
 			http.NotFound(w, r)
+			return
+		}
+		if r.URL.Path == "/acoustid" || strings.HasPrefix(r.URL.Path, "/acoustid/") {
+			http.StripPrefix("/acoustid", acoustid).ServeHTTP(w, r)
 			return
 		}
 		fake.Config.Handler.ServeHTTP(w, r)

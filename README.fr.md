@@ -42,6 +42,7 @@ MusicHub se configure avec des **variables d'environnement** (il ne lit pas les 
 | `MUSICHUB_MUSIC` | `./music` (`/music` dans Docker) | Dossier de musique (pas encore utilisé) |
 | `MUSICHUB_MB_URL` | `https://musicbrainz.org/ws/2` | API MusicBrainz |
 | `MUSICHUB_CAA_URL` | `https://coverartarchive.org` | Cover Art Archive |
+| `MUSICHUB_ACOUSTID_URL` | `https://api.acoustid.org/v2` | API AcoustID |
 | `MUSICHUB_FFMPEG` | `ffmpeg` | Exécutable ffmpeg (nom dans le `PATH` ou chemin complet) |
 | `MUSICHUB_FFPROBE` | `ffprobe` | Exécutable ffprobe |
 | `MUSICHUB_FPCALC` | `fpcalc` | Exécutable fpcalc (Chromaprint) |
