@@ -31,6 +31,8 @@ type WorkerStatus struct {
 }
 
 // Worker runs identification jobs from the persistent queue, one at a time.
+// A single worker per database is assumed: jobs are not locked against
+// another process or another Worker on the same store.
 type Worker struct {
 	id   *Identifier
 	st   *store.Store
@@ -39,6 +41,8 @@ type Worker struct {
 
 	mu           sync.Mutex
 	done, failed int
+	running      string // id of the file being identified, "" when idle
+	rerun        bool   // Enqueue hit the running file: queue it again after
 }
 
 // NewWorker returns a worker running id over the jobs stored in st.
@@ -51,6 +55,15 @@ func (w *Worker) now() time.Time { return w.id.d.Now() }
 // Enqueue adds an identification job for the file (nothing happens when it
 // already has one) and wakes the worker. It never blocks on the worker.
 func (w *Worker) Enqueue(fileID string) {
+	w.mu.Lock()
+	if fileID != "" && fileID == w.running {
+		// Its job row is about to be deleted or rescheduled: remember the
+		// request and queue the file again once the run ends.
+		w.rerun = true
+		w.mu.Unlock()
+		return
+	}
+	w.mu.Unlock()
 	if _, err := w.st.EnqueueJob(context.Background(), JobKind, fileID, w.now()); err != nil {
 		slog.Error("identification : mise en file impossible", "file", fileID, "err", err)
 		return
@@ -144,8 +157,25 @@ func (w *Worker) processDue(ctx context.Context) {
 	}
 }
 
-// process runs one job and updates the queue according to the outcome.
+// process runs one job and updates the queue according to the outcome. An
+// Enqueue of the same file during the run queues it again afterwards.
 func (w *Worker) process(ctx context.Context, job store.Job) {
+	w.mu.Lock()
+	w.running, w.rerun = job.FileID, false
+	w.mu.Unlock()
+	defer func() {
+		w.mu.Lock()
+		rerun := w.rerun
+		w.running, w.rerun = "", false
+		w.mu.Unlock()
+		if rerun {
+			w.Enqueue(job.FileID)
+		}
+	}()
+	w.runJob(ctx, job)
+}
+
+func (w *Worker) runJob(ctx context.Context, job store.Job) {
 	res, err := w.id.Identify(ctx, job.FileID)
 	if ctx.Err() != nil {
 		// Interrupted: the job stays queued for the next start.

@@ -1,6 +1,9 @@
 package store
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 // Candidate is a recording proposed for a file that could not be identified
 // automatically.
@@ -20,14 +23,41 @@ const (
 	SourceSearch   = "search"
 )
 
-// SetCandidates replaces the candidates of a file. Ranks are assigned in the
-// order given, starting at 1.
+// SetCandidates replaces the candidates of a pending file. Ranks are assigned
+// in the order given, starting at 1. It returns ErrNotPending when the file
+// is no longer pending, ErrNotFound when it is gone.
 func (s *Store) SetCandidates(ctx context.Context, fileID string, cands []Candidate) error {
+	return s.setCandidates(ctx, fileID, cands, time.Time{})
+}
+
+// FinishUnmatched records the end of an identification run that found no
+// match: the candidates replace the previous ones and the attempt time is
+// kept, so the file is not queued again at startup until it changes. Same
+// errors as SetCandidates.
+func (s *Store) FinishUnmatched(ctx context.Context, fileID string, cands []Candidate, at time.Time) error {
+	return s.setCandidates(ctx, fileID, cands, at)
+}
+
+func (s *Store) setCandidates(ctx context.Context, fileID string, cands []Candidate, attempted time.Time) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
+	// Touch the row first: it guards on the status and takes the write lock.
+	q := `UPDATE files SET identify_attempted_at = identify_attempted_at WHERE id = ? AND status = 'pending'`
+	args := []any{fileID}
+	if !attempted.IsZero() {
+		q = `UPDATE files SET identify_attempted_at = ? WHERE id = ? AND status = 'pending'`
+		args = []any{formatTime(attempted), fileID}
+	}
+	res, err := tx.ExecContext(ctx, q, args...)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return notPendingOrMissing(ctx, tx, fileID)
+	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM identification_candidates WHERE file_id = ?`, fileID); err != nil {
 		return err
 	}

@@ -78,9 +78,12 @@ func (f *fakeAcoustID) Lookup(context.Context, string, string, int) ([]acoustid.
 // fakeFinder answers searches with fixed hits (or an error) and delegates
 // lookups to inner.
 type fakeFinder struct {
-	inner    RecordingFinder
-	hits     []musicbrainz.RecordingHit
-	err      error
+	inner RecordingFinder
+	hits  []musicbrainz.RecordingHit
+	err   error
+	// onSearch, when set, runs inside each search (to simulate a concurrent
+	// change while a remote call is in flight).
+	onSearch func()
 	mu       sync.Mutex
 	searches int
 }
@@ -89,6 +92,9 @@ func (f *fakeFinder) FindRecordings(context.Context, musicbrainz.RecordingQuery,
 	f.mu.Lock()
 	f.searches++
 	f.mu.Unlock()
+	if f.onSearch != nil {
+		f.onSearch()
+	}
 	return f.hits, f.err
 }
 
@@ -632,5 +638,84 @@ func TestSkipsNonPendingFiles(t *testing.T) {
 	}
 	if n := e.mb.Requests(); n != 0 {
 		t.Errorf("MusicBrainz requests = %d, want 0", n)
+	}
+}
+
+func TestStatusChangeDuringIdentification(t *testing.T) {
+	ctx := context.Background()
+	confident := []musicbrainz.RecordingHit{{RecordingID: recGlassTide, Title: "Glass Tide", ArtistName: "Lumen Harbor",
+		LengthMs: 201000, Score: 100, Releases: []musicbrainz.ReleaseRef{{ReleaseGroupID: albumLantern, Title: "Paper Lanterns", Date: "2003", Disc: 2, Position: 3}}}}
+
+	for _, tc := range []struct {
+		name, status string
+		hits         []musicbrainz.RecordingHit
+	}{
+		{"missing before the link", store.FileMissing, confident},
+		{"hidden before the candidates", store.FileHidden, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newEnv(t)
+			var f store.File
+			e.deps.MB = &fakeFinder{inner: e.mbc, hits: tc.hits, onSearch: func() {
+				// The scanner (or the user) changes the file while MusicBrainz answers.
+				if err := e.st.SetFileStatus(ctx, f.ID, tc.status); err != nil {
+					t.Error(err)
+				}
+			}}
+			f = e.addFile(t, store.File{DurationMs: 201000, Tags: glassTideTags()})
+			if _, err := New(e.deps).Identify(ctx, f.ID); !errors.Is(err, ErrSkipped) {
+				t.Fatalf("Identify err = %v, want ErrSkipped", err)
+			}
+			g := e.file(t, f.ID)
+			if g.Status != tc.status || g.RecordingID != "" || g.AlbumID != "" {
+				t.Errorf("file = %s %q %q, want untouched %s", g.Status, g.RecordingID, g.AlbumID, tc.status)
+			}
+			if cands, _ := e.st.ListCandidates(ctx, f.ID); len(cands) != 0 {
+				t.Errorf("candidates written for a non-pending file: %+v", cands)
+			}
+		})
+	}
+}
+
+func TestDuplicatesIgnoreStaleFiles(t *testing.T) {
+	mediatest.RequireTool(t, "ffmpeg")
+	ctx := context.Background()
+	e := newEnv(t)
+	// The existing uploaded copy vanished from the disk behind our back: it
+	// must not be "replaced" (its row deleted) on the strength of a stale row.
+	old := e.addAudio(t, "old.mp3", store.OriginUploaded, false, 128000, true)
+	if err := os.Remove(old.Path); err != nil {
+		t.Fatal(err)
+	}
+	flac := e.addAudio(t, "new.flac", store.OriginDropped, true, 900000, false)
+	res := e.identify(t, flac.ID)
+	if res.Status != store.FileIdentified || res.Duplicate != "" {
+		t.Fatalf("result = %+v", res)
+	}
+	if g, err := e.st.GetFile(ctx, old.ID); err != nil || g.Status != store.FileIdentified {
+		t.Errorf("stale existing file = %+v, %v; want left alone", g, err)
+	}
+}
+
+func TestEnqueueDuringRunIsKept(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+	var w *Worker
+	var f store.File
+	once := sync.Once{}
+	finder := &fakeFinder{inner: e.mbc, onSearch: func() {
+		// The scanner sees the file change while it is being identified.
+		once.Do(func() { w.Enqueue(f.ID) })
+	}}
+	e.deps.MB = finder
+	w = NewWorker(New(e.deps), e.st)
+	f = e.addFile(t, store.File{DurationMs: 201000, Tags: glassTideTags()})
+	w.Enqueue(f.ID)
+	w.processDue(ctx)
+	if n := finder.count(); n != 2 {
+		t.Fatalf("searches = %d, want 2 (the Enqueue during the run must trigger a second run)", n)
+	}
+	if s := w.Status(); s.Queued != 0 || s.Done != 2 {
+		t.Errorf("status = %+v", s)
 	}
 }

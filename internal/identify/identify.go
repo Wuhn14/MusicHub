@@ -156,9 +156,10 @@ type match struct {
 // Identify tries to identify the file. On success the file is linked
 // (status identified) and the duplicates rule is applied; otherwise it stays
 // pending with its best candidates. It returns ErrSkipped for a file that is
-// not pending, store.ErrNotFound for an unknown file, and an error for which
-// IsTransient is true when a remote service failed (the candidates gathered
-// so far are kept).
+// not pending (also when its status changes while it is being identified:
+// nothing is written then), store.ErrNotFound for an unknown file, and an
+// error for which IsTransient is true when a remote service failed (the
+// candidates gathered so far are kept).
 func (id *Identifier) Identify(ctx context.Context, fileID string) (Result, error) {
 	f, err := id.d.Store.GetFile(ctx, fileID)
 	if err != nil {
@@ -177,7 +178,7 @@ func (id *Identifier) Identify(ctx context.Context, fileID string) (Result, erro
 	keepPartial := func(err error) (Result, error) {
 		if len(cands) > 0 && ctx.Err() == nil {
 			ranked := rankCandidates(cands)
-			if serr := id.d.Store.SetCandidates(ctx, f.ID, ranked); serr != nil {
+			if serr := id.d.Store.SetCandidates(ctx, f.ID, ranked); serr != nil && !errors.Is(serr, store.ErrNotPending) {
 				slog.Warn("identification : candidats non enregistrés", "file", f.ID, "err", serr)
 			}
 		}
@@ -190,8 +191,8 @@ func (id *Identifier) Identify(ctx context.Context, fileID string) (Result, erro
 	}
 	if m == nil {
 		ranked := rankCandidates(cands)
-		if err := id.d.Store.SetCandidates(ctx, f.ID, ranked); err != nil {
-			return Result{}, err
+		if err := id.d.Store.FinishUnmatched(ctx, f.ID, ranked, id.d.Now()); err != nil {
+			return Result{}, notPending(err)
 		}
 		return Result{Status: store.FilePending, Candidates: len(ranked)}, nil
 	}
@@ -215,16 +216,25 @@ func (id *Identifier) Identify(ctx context.Context, fileID string) (Result, erro
 		disc, pos = f.Tags.Disc, f.Tags.Track
 	}
 	if err := id.d.Store.LinkFile(ctx, f.ID, m.hit.RecordingID, albumID, disc, pos); err != nil {
-		return Result{}, err
+		return Result{}, notPending(err)
 	}
 	res := Result{Status: store.FileIdentified, RecordingID: m.hit.RecordingID, AlbumID: albumID, Source: m.source}
-	f.Status, f.RecordingID, f.AlbumID = store.FileIdentified, m.hit.RecordingID, albumID
-	dup, err := resolveDuplicates(ctx, id.d.Store, f, set.Duplicates)
+	// The file is linked: finish the duplicates step even if a shutdown starts
+	// now, so no half-resolved state is left behind.
+	dup, err := resolveDuplicates(context.WithoutCancel(ctx), id.d.Store, f.ID, set.Duplicates)
 	if err != nil {
 		return res, fmt.Errorf("duplicates: %w", err)
 	}
 	res.Duplicate = dup
 	return res, nil
+}
+
+// notPending maps the store's guard error to ErrSkipped.
+func notPending(err error) error {
+	if errors.Is(err, store.ErrNotPending) {
+		return fmt.Errorf("%w: status changed during identification", ErrSkipped)
+	}
+	return err
 }
 
 // find runs the three identification steps in order. It returns the match,

@@ -92,11 +92,12 @@ func (s *Store) CountJobs(ctx context.Context, kind string) (int, error) {
 }
 
 // PendingFilesWithoutJob returns the ids of the pending files that have no
-// job of the given kind and no identification candidates yet, oldest first.
+// job of the given kind, no identification candidates and no finished
+// identification attempt since they last changed, oldest first.
 func (s *Store) PendingFilesWithoutJob(ctx context.Context, kind string) ([]string, error) {
 	rows, err := s.db.QueryContext(ctx, `
 SELECT f.id FROM files f
-WHERE f.status = 'pending'
+WHERE f.status = 'pending' AND f.identify_attempted_at IS NULL
   AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.kind = ? AND j.file_id = f.id)
   AND NOT EXISTS (SELECT 1 FROM identification_candidates c WHERE c.file_id = f.id)
 ORDER BY f.added_at, f.path`, kind)

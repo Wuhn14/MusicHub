@@ -32,14 +32,20 @@ func better(a, b store.File) bool {
 }
 
 // resolveDuplicates applies the duplicates setting to the newly linked file
-// f against the other identified files of the same recording. The loser of a
+// against the other identified files of the same recording. The loser of a
 // comparison is deleted (disk and database) when it was uploaded, and hidden
 // when it was dropped in the music folder: a dropped file is never deleted.
-// Ties keep the existing file. It returns the last outcome ("" when nothing
-// was done).
-func resolveDuplicates(ctx context.Context, st *store.Store, f store.File, policy string) (string, error) {
+// Ties keep the existing file. Rows are read again right before each
+// decision, and a file that is no longer identified or no longer on the disk
+// is left alone, so nothing is ever removed on stale data. It returns the
+// last outcome ("" when nothing was done).
+func resolveDuplicates(ctx context.Context, st *store.Store, fileID, policy string) (string, error) {
 	if policy == settings.DuplicatesKeepBoth {
 		return "", nil
+	}
+	f, ok, err := current(ctx, st, fileID)
+	if err != nil || !ok {
+		return "", err
 	}
 	others, err := st.ListFiles(ctx, store.FileFilter{RecordingID: f.RecordingID, Status: store.FileIdentified})
 	if err != nil {
@@ -48,6 +54,17 @@ func resolveDuplicates(ctx context.Context, st *store.Store, f store.File, polic
 	outcome := ""
 	for _, o := range others {
 		if o.ID == f.ID {
+			continue
+		}
+		// Fresh views of both files for this comparison.
+		if f, ok, err = current(ctx, st, f.ID); err != nil || !ok {
+			return outcome, err
+		}
+		o, ok, err := current(ctx, st, o.ID)
+		if err != nil {
+			return outcome, err
+		}
+		if !ok || o.RecordingID != f.RecordingID {
 			continue
 		}
 		newWins := policy != settings.DuplicatesKeepExisting && better(f, o)
@@ -60,6 +77,26 @@ func resolveDuplicates(ctx context.Context, st *store.Store, f store.File, polic
 		}
 	}
 	return outcome, nil
+}
+
+// current reads a file again and reports whether it is still identified and
+// present on the disk.
+func current(ctx context.Context, st *store.Store, id string) (store.File, bool, error) {
+	f, err := st.GetFile(ctx, id)
+	if errors.Is(err, store.ErrNotFound) {
+		return store.File{}, false, nil
+	}
+	if err != nil {
+		return store.File{}, false, err
+	}
+	if f.Status != store.FileIdentified {
+		return f, false, nil
+	}
+	if _, err := os.Stat(f.Path); err != nil {
+		slog.Warn("doublons : fichier absent du disque, ignoré", "file", f.ID, "path", f.Path, "err", err)
+		return f, false, nil
+	}
+	return f, true, nil
 }
 
 // discard removes the losing file: an uploaded file is deleted from the disk

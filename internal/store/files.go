@@ -100,7 +100,7 @@ func scanFile(r rowScanner) (File, error) {
 // UpsertScannedFile records a file found by the scanner. A file already stored
 // at the same path keeps its id, origin, identification links and status; only
 // the physical fields (size, date, probe result, tags) and last-seen time are
-// refreshed. A missing file regains the status it had before; an unreadable
+// refreshed, and its identification attempt is forgotten (the file changed). A missing file regains the status it had before; an unreadable
 // file takes the status given in f. The stored row is returned.
 func (s *Store) UpsertScannedFile(ctx context.Context, f File) (File, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -159,7 +159,8 @@ VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		if f.Status == FileUnreadable {
 			_, err = tx.ExecContext(ctx, `
 UPDATE files SET size=?, mtime=?, format=?, codec=?, bitrate=?, sample_rate=?,
-  duration_ms=?, lossless=?, tags_json=?, status=?, prev_status='', last_seen=?, missing_since=''
+  duration_ms=?, lossless=?, tags_json=?, status=?, prev_status='', last_seen=?, missing_since='',
+  identify_attempted_at=NULL
 WHERE id = ?`,
 				f.Size, f.Mtime.UnixNano(), f.Format, f.Codec, f.BitRate, f.SampleRate,
 				f.DurationMs, f.Lossless, string(tags), newStatus, optTime(f.LastSeen), id)
@@ -167,7 +168,7 @@ WHERE id = ?`,
 			_, err = tx.ExecContext(ctx, `
 UPDATE files SET size=?, mtime=?, format=?, codec=?, bitrate=?, sample_rate=?,
   duration_ms=?, lossless=?, tags_json=?, disc=?, position=?, status=?, prev_status='',
-  last_seen=?, missing_since=''
+  last_seen=?, missing_since='', identify_attempted_at=NULL
 WHERE id = ?`,
 				f.Size, f.Mtime.UnixNano(), f.Format, f.Codec, f.BitRate, f.SampleRate,
 				f.DurationMs, f.Lossless, string(tags), f.Disc, f.Position, newStatus, optTime(f.LastSeen), id)
@@ -296,9 +297,27 @@ DELETE FROM files WHERE status = 'missing' AND missing_since <> '' AND missing_s
 	return int(n), err
 }
 
-// LinkFile marks a file as identified: it is the given recording, at the
-// given disc and position of the album (a release group; empty when the
-// recording belongs to none). Its identification candidates are dropped.
+// ErrNotPending is returned by the identification writes when the file is no
+// longer pending (the scanner or the user changed it meanwhile).
+var ErrNotPending = errors.New("store: file is not pending")
+
+// notPendingOrMissing tells why a guarded update touched no row.
+func notPendingOrMissing(ctx context.Context, tx *sql.Tx, id string) error {
+	var n int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM files WHERE id = ?`, id).Scan(&n); err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return ErrNotPending
+}
+
+// LinkFile marks a pending file as identified: it is the given recording, at
+// the given disc and position of the album (a release group; empty when the
+// recording belongs to none). Its identification candidates are dropped. It
+// returns ErrNotPending when the file is no longer pending, ErrNotFound when
+// it is gone.
 func (s *Store) LinkFile(ctx context.Context, id, recordingID, albumID string, disc, position int) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -306,13 +325,14 @@ func (s *Store) LinkFile(ctx context.Context, id, recordingID, albumID string, d
 	}
 	defer tx.Rollback()
 	res, err := tx.ExecContext(ctx, `
-UPDATE files SET status = 'identified', recording_id = ?, album_id = ?, disc = ?, position = ?
-WHERE id = ?`, recordingID, albumID, disc, position, id)
+UPDATE files SET status = 'identified', recording_id = ?, album_id = ?, disc = ?, position = ?,
+  identify_attempted_at = NULL
+WHERE id = ? AND status = 'pending'`, recordingID, albumID, disc, position, id)
 	if err != nil {
 		return err
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
-		return ErrNotFound
+		return notPendingOrMissing(ctx, tx, id)
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM identification_candidates WHERE file_id = ?`, id); err != nil {
 		return err

@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 )
@@ -89,5 +90,56 @@ func TestAvailability(t *testing.T) {
 	}
 	if counts, _ := s.ArtistAvailability(ctx, "other"); len(counts) != 0 {
 		t.Errorf("ArtistAvailability(other) = %v", counts)
+	}
+}
+
+func TestIdentificationWritesNeedPending(t *testing.T) {
+	s := openTemp(t)
+	ctx := context.Background()
+	t0 := time.Date(2026, 3, 1, 10, 0, 0, 0, time.UTC)
+	f, _ := s.UpsertScannedFile(ctx, File{Path: "/m/a.mp3", LastSeen: t0})
+	s.SetFileStatus(ctx, f.ID, FileMissing)
+	if err := s.LinkFile(ctx, f.ID, "r1", "al", 1, 1); !errors.Is(err, ErrNotPending) {
+		t.Errorf("LinkFile on a missing file = %v, want ErrNotPending", err)
+	}
+	if err := s.SetCandidates(ctx, f.ID, []Candidate{{RecordingID: "r1"}}); !errors.Is(err, ErrNotPending) {
+		t.Errorf("SetCandidates on a missing file = %v, want ErrNotPending", err)
+	}
+	if err := s.FinishUnmatched(ctx, "nope", nil, t0); !errors.Is(err, ErrNotFound) {
+		t.Errorf("FinishUnmatched unknown = %v, want ErrNotFound", err)
+	}
+	if g, _ := s.GetFile(ctx, f.ID); g.Status != FileMissing || g.RecordingID != "" {
+		t.Errorf("file = %+v", g)
+	}
+	if c, _ := s.ListCandidates(ctx, f.ID); len(c) != 0 {
+		t.Errorf("candidates = %+v", c)
+	}
+}
+
+func TestIdentifyAttemptMarker(t *testing.T) {
+	s := openTemp(t)
+	ctx := context.Background()
+	t0 := time.Date(2026, 3, 1, 10, 0, 0, 0, time.UTC)
+	f, _ := s.UpsertScannedFile(ctx, File{Path: "/m/a.mp3", Size: 10, Mtime: t0, LastSeen: t0})
+	// Partial candidates (a failed run) do not count as an attempt.
+	if err := s.SetCandidates(ctx, f.ID, nil); err != nil {
+		t.Fatal(err)
+	}
+	if ids, _ := s.PendingFilesWithoutJob(ctx, "identify"); len(ids) != 1 {
+		t.Fatalf("backlog after SetCandidates = %v, want the file", ids)
+	}
+	// A finished run without match nor candidates: not queued again.
+	if err := s.FinishUnmatched(ctx, f.ID, nil, t0); err != nil {
+		t.Fatal(err)
+	}
+	if ids, _ := s.PendingFilesWithoutJob(ctx, "identify"); len(ids) != 0 {
+		t.Fatalf("backlog after FinishUnmatched = %v, want none", ids)
+	}
+	// The file changes on disk: the attempt is forgotten.
+	if _, err := s.UpsertScannedFile(ctx, File{Path: "/m/a.mp3", Size: 11, Mtime: t0.Add(time.Hour), Status: FilePending, LastSeen: t0}); err != nil {
+		t.Fatal(err)
+	}
+	if ids, _ := s.PendingFilesWithoutJob(ctx, "identify"); len(ids) != 1 || ids[0] != f.ID {
+		t.Fatalf("backlog after a change = %v, want the file", ids)
 	}
 }
