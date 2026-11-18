@@ -13,9 +13,79 @@ L'objectif est de réunir dans une seule application ce qui demande aujourd'hui 
 - une **intégration d'indexeurs** (dans l'esprit de [Prowlarr](https://github.com/Prowlarr/Prowlarr)) ;
 - un **lecteur web intégré**, et une compatibilité avec les applis mobiles existantes comme [Symfonium](https://symfonium.app/) via l'API Subsonic/OpenSubsonic.
 
-## Preuve de concept
+## État actuel (étape 1)
 
-Ce dépôt contient pour l'instant une petite **preuve de concept** qui montre à quoi ressemble l'idée : une seule page pour chercher, demander et écouter de la musique, en pilotant des instances Navidrome, Lidarr et Prowlarr existantes. C'est une démo, pas l'architecture finale. Voir [POC.md](POC.md) pour la lancer.
+La première étape est le **socle du catalogue**, écrit en Go avec une interface web Svelte embarquée :
+
+- recherche dans tout le catalogue [MusicBrainz](https://musicbrainz.org/) (artistes, albums, titres) ;
+- pages d'artiste avec leur discographie, pages d'album avec la liste des titres et leurs durées ;
+- pochettes issues de la [Cover Art Archive](https://coverartarchive.org/), mises en cache sur disque ;
+- un cache SQLite local des données du catalogue : l'appli continue de fonctionner quand MusicBrainz est lent ou injoignable.
+
+La lecture et les téléchargements arrivent aux étapes suivantes (voir la feuille de route). L'interface est pour l'instant en français uniquement.
+
+## Lancer en local
+
+Il faut Go 1.26 ou plus récent. L'interface web est embarquée dans le binaire : construisez-la d'abord (voir [Développement](#développement)), puis :
+
+```bash
+go run ./cmd/musichub
+# http://localhost:8080
+```
+
+MusicHub se configure avec des **variables d'environnement** (il ne lit pas les fichiers `.env` ; `.env.example` les liste avec leurs valeurs par défaut) :
+
+| Variable | Défaut | Rôle |
+|----------|--------|------|
+| `MUSICHUB_PORT` | `8080` | Port HTTP |
+| `MUSICHUB_DATA` | `./data` (`/data` dans Docker) | Base de données et cache des pochettes |
+| `MUSICHUB_MUSIC` | `./music` (`/music` dans Docker) | Dossier de musique (pas encore utilisé) |
+| `MUSICHUB_MB_URL` | `https://musicbrainz.org/ws/2` | API MusicBrainz |
+| `MUSICHUB_CAA_URL` | `https://coverartarchive.org` | Cover Art Archive |
+
+```bash
+# bash
+MUSICHUB_PORT=9000 go run ./cmd/musichub
+```
+
+```powershell
+# PowerShell
+$env:MUSICHUB_PORT = "9000"; go run ./cmd/musichub
+```
+
+## Lancer avec Docker
+
+```bash
+docker compose up -d --build
+# http://localhost:8090
+```
+
+La base de données interne et le cache des pochettes sont dans le volume nommé `musichub-data` ; votre dossier de musique est monté depuis `./music`. Le conteneur s'exécute en utilisateur non root. `GET /healthz` répond `ok` quand le serveur tourne, ce qui sert à la supervision.
+
+MusicHub n'a **pas encore d'authentification** : utilisez-le sur un réseau de confiance ou derrière un reverse proxy qui gère les accès.
+
+## Développement
+
+```bash
+cd web
+npm ci
+npm run build       # construit l'interface dans internal/web/dist (embarquée par Go)
+npm run check       # vérifie les types du code Svelte
+npm run dev         # serveur Vite (proxy /api vers localhost:8080)
+cd ..
+
+go vet ./...
+go test ./...
+```
+
+Test de bout en bout (Chromium, sur des données inventées servies par `cmd/fakemb`, sans réseau) :
+
+```bash
+cd web
+npm run build
+npx playwright install chromium
+npm run test:e2e
+```
 
 ## Pourquoi ?
 
