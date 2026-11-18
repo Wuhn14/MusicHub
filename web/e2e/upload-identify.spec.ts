@@ -49,19 +49,12 @@ test('an unknown upload becomes a local track that plays', async ({ page, reques
   const title = `Mon enregistrement ${stamp}`;
   await uploadThroughPage(page, makeMp3(dir, name, {}));
 
-  // The upload row only says « À identifier » after a two-minute window (the
-  // page cannot tell a file waiting for a decision from one still being
-  // checked), so the wait is on the server's own list instead.
-  await expect(page.getByRole('listitem').filter({ hasText: name })).toBeVisible();
-  await expect
-    .poll(
-      async () => {
-        const list = (await (await request.get('/api/identify')).json()) as { files: { name: string }[] };
-        return list.files.some((f) => f.name === name);
-      },
-      { timeout: 45_000 },
-    )
-    .toBe(true);
+  // As soon as the automatic identification gives up, the upload row says so
+  // (well before the page's two-minute polling window ends).
+  const row = page.getByRole('listitem').filter({ hasText: name });
+  await expect(row.getByRole('link', { name: 'À identifier' })).toBeVisible({ timeout: 45_000 });
+  const list = (await (await request.get('/api/identify')).json()) as { files: { name: string }[] };
+  expect(list.files.some((f) => f.name === name)).toBe(true);
 
   await page.goto('/identify');
   const card = page.getByRole('article', { name });
@@ -111,4 +104,13 @@ test('a file tagged with a MusicBrainz recording id is identified by itself', as
   expect(res.ok()).toBeTruthy();
   const body = (await res.json()) as { tracks: Record<string, string> };
   expect(Object.keys(body.tracks)).toContain(recordingGlassTide);
+
+  // The catalog album page plays it.
+  await page.goto(`/album/${albumPaperLanterns}`);
+  await expect(page.getByRole('heading', { level: 1, name: 'Paper Lanterns' })).toBeVisible();
+  await page.getByRole('button', { name: 'Lire Glass Tide' }).click();
+  const bar = page.getByRole('contentinfo', { name: 'Lecteur' });
+  await expect(bar.getByText('Glass Tide')).toBeVisible();
+  const slider = bar.getByRole('slider', { name: 'Position dans le titre' });
+  await expect.poll(async () => Number(await slider.inputValue()), { timeout: 15_000 }).toBeGreaterThanOrEqual(1);
 });

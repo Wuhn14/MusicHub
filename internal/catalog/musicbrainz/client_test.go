@@ -267,6 +267,8 @@ func TestGetAlbumPicksEarliestOfficialRelease(t *testing.T) {
 		{"00000000-0000-4000-8000-0000000000e1", "Opening Tide", 1, 1, 180000},
 		{"00000000-0000-4000-8000-0000000000e2", "Second Wind", 1, 2, 240000}, // recording length fallback
 		{"00000000-0000-4000-8000-0000000000e3", "Silent Close", 2, 1, 0},
+		{"00000000-0000-4000-8000-0000000000e4", "Harbor Lights", 2, 2, 195000},
+		{mbtest.RecordingGlassTide, "Glass Tide", 2, 3, 201000},
 	}
 	if len(al.Tracks) != len(want) {
 		t.Fatalf("tracks = %+v", al.Tracks)

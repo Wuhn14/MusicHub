@@ -3,5 +3,7 @@
  {"position":1,"title":"Opening Tide","length":180000,"recording":{"id":"00000000-0000-4000-8000-0000000000e1","title":"Opening Tide","length":181000}},
  {"position":2,"title":"Second Wind","recording":{"id":"00000000-0000-4000-8000-0000000000e2","title":"Second Wind","length":240000}}]},
 {"position":2,"tracks":[
- {"position":1,"title":"Silent Close","recording":{"id":"00000000-0000-4000-8000-0000000000e3","title":"Silent Close"}}]}
+ {"position":1,"title":"Silent Close","recording":{"id":"00000000-0000-4000-8000-0000000000e3","title":"Silent Close"}},
+ {"position":2,"title":"Harbor Lights","recording":{"id":"00000000-0000-4000-8000-0000000000e4","title":"Harbor Lights","length":195000}},
+ {"position":3,"title":"Glass Tide","recording":{"id":"00000000-0000-4000-8000-0000000000d1","title":"Glass Tide","length":201000}}]}
 ]}

@@ -44,12 +44,12 @@ const (
 	// is willing to browse.
 	ArtistHuge = "00000000-0000-4000-8000-0000000000a3"
 	// AlbumTwoDisc is a release group with five releases; its reference
-	// release is ReleaseReference (official, earliest, two discs, three
-	// tracks).
+	// release is ReleaseReference (official, earliest, fewest tracks: two
+	// discs, five tracks, RecordingGlassTide last).
 	AlbumTwoDisc     = "00000000-0000-4000-8000-0000000000b1"
 	ReleaseReference = "00000000-0000-4000-8000-0000000000c1"
 	// RecordingGlassTide is a recording with a lookup fixture: second disc,
-	// third track of a release of AlbumTwoDisc.
+	// third track of ReleaseReference, the reference release of AlbumTwoDisc.
 	RecordingGlassTide = "00000000-0000-4000-8000-0000000000d1"
 	// ManyAlbums is the number of release groups of ArtistMany.
 	ManyAlbums = 230

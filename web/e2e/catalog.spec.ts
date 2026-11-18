@@ -19,8 +19,10 @@ test('search an artist, open its Albums section, then an album with its tracks',
   await expect(page).toHaveURL(/\/album\//);
   await expect(page.getByRole('heading', { level: 1, name: 'Paper Lanterns' })).toBeVisible();
 
-  const tracks = page.getByRole('listitem').filter({ hasText: /Opening Tide|Second Wind|Silent Close/ });
-  await expect(tracks).toHaveCount(3);
+  const tracks = page
+    .getByRole('listitem')
+    .filter({ hasText: /Opening Tide|Second Wind|Silent Close|Harbor Lights|Glass Tide/ });
+  await expect(tracks).toHaveCount(5);
   await expect(tracks.filter({ hasText: 'Opening Tide' })).toContainText('3:00');
   await expect(tracks.filter({ hasText: 'Second Wind' })).toContainText('4:00');
   // Silent Close has no length in the fixture: no duration is shown.
@@ -47,7 +49,7 @@ test('a catalog album plays the tracks of the library and greys the others', asy
 
   await card.click();
   await expect(page.getByRole('heading', { level: 1, name: 'Paper Lanterns' })).toBeVisible();
-  await expect(page.getByText('1 sur 3 dans ta bibliothèque')).toBeVisible();
+  await expect(page.getByText('1 sur 5 dans ta bibliothèque')).toBeVisible();
 
   // Missing tracks are greyed and cannot be played.
   const missing = page.getByRole('group').filter({ hasText: 'Opening Tide' });
