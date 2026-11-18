@@ -22,6 +22,7 @@ import (
 	"github.com/Wuhn14/MusicHub/internal/server"
 	"github.com/Wuhn14/MusicHub/internal/settings"
 	"github.com/Wuhn14/MusicHub/internal/store"
+	"github.com/Wuhn14/MusicHub/internal/stream"
 	"github.com/Wuhn14/MusicHub/internal/web"
 )
 
@@ -77,9 +78,17 @@ func run() error {
 	// the database before it is closed.
 	defer func() { stop(); <-runnerDone }()
 
+	streamer := stream.New(st, tools, func() int {
+		s, err := settingsSvc.Get(ctx)
+		if err != nil || s.MaxTranscodes <= 0 {
+			return 3
+		}
+		return s.MaxTranscodes
+	})
+
 	srv := &http.Server{
 		Addr:              fmt.Sprintf(":%d", cfg.Port),
-		Handler:           server.New(web.NewAPI(web.Deps{Catalog: cat, Covers: covers, Settings: settingsSvc, Tools: tools, Library: library.Service{Query: library.NewQuery(st), Runner: runner}}), web.NewUI()),
+		Handler:           server.New(web.NewAPI(web.Deps{Catalog: cat, Covers: covers, Settings: settingsSvc, Tools: tools, Library: library.Service{Query: library.NewQuery(st), Runner: runner}, Stream: streamer}), web.NewUI()),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       120 * time.Second,
 		BaseContext:       func(net.Listener) context.Context { return ctx },
