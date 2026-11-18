@@ -1,6 +1,7 @@
 <script lang="ts">
   import {
     errorMessage,
+    getLibraryAlbum,
     getLibraryAlbums,
     getLibraryArtists,
     getLibraryTracks,
@@ -15,6 +16,7 @@
     type ScanStatus,
   } from '../lib/api';
   import { navigate, replaceQuery, type LibraryTab } from '../lib/router';
+  import { player, toPlayable } from '../lib/player.svelte';
   import AlbumGrid from '../components/AlbumGrid.svelte';
   import Status from '../components/Status.svelte';
   import TrackList from '../components/TrackList.svelte';
@@ -112,6 +114,18 @@
     })),
   );
   const coverIds = $derived(new Map(albums.map((a) => [a.key, a.albumId])));
+
+  let playError = $state('');
+
+  async function playAlbum(a: AlbumSummary): Promise<void> {
+    playError = '';
+    try {
+      const page = await getLibraryAlbum(a.id);
+      player.playList(page.tracks.map(toPlayable), 0);
+    } catch (err) {
+      if (!isAbort(err)) playError = errorMessage(err);
+    }
+  }
 
   // Scan status. Polled every 2 s, only while a scan runs (or was just asked).
   let scan = $state<ScanStatus | null>(null);
@@ -260,8 +274,10 @@
       {#if gridAlbums.length === 0}
         <p class="none">Aucun album ne correspond.</p>
       {:else}
+        {#if playError}<p class="problem" role="alert">{playError}</p>{/if}
         <AlbumGrid
           albums={gridAlbums}
+          onplay={playAlbum}
           hrefFor={(a) => `/library/album/${encodeURIComponent(a.id)}`}
           coverFor={(a) => coverIds.get(a.id) ?? ''}
         />

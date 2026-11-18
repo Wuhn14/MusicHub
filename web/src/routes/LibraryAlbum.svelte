@@ -4,6 +4,8 @@
   import Cover from '../components/Cover.svelte';
   import Status from '../components/Status.svelte';
   import TrackList from '../components/TrackList.svelte';
+  import Icon from '../components/Icon.svelte';
+  import { player, toPlayable } from '../lib/player.svelte';
 
   interface Props {
     key: string;
@@ -32,6 +34,13 @@
       });
     return () => controller.abort();
   });
+
+  function playAll(shuffle: boolean): void {
+    if (!album || album.tracks.length === 0) return;
+    const tracks = album.tracks.map(toPlayable);
+    player.setShuffle(shuffle);
+    player.playList(tracks, shuffle ? Math.floor(Math.random() * tracks.length) : 0);
+  }
 </script>
 
 <svelte:head>
@@ -57,7 +66,16 @@
           {album.trackCount > 1 ? 'titres' : 'titre'}{#if album.durationMs > 0}, {formatTotal(album.durationMs)}{/if}
         </span>
       </p>
-      <!-- Play controls (play album, shuffle) will go here. -->
+      {#if album.tracks.length > 0}
+        <div class="actions">
+          <button type="button" class="play" onclick={() => playAll(false)}>
+            <Icon name="play" size={22} /> Lire
+          </button>
+          <button type="button" class="shuffle" onclick={() => playAll(true)}>
+            <Icon name="shuffle" size={20} /> Aléatoire
+          </button>
+        </div>
+      {/if}
     </div>
   </header>
   <TrackList tracks={album.tracks} />
@@ -114,6 +132,47 @@
   .meta a {
     color: var(--text);
     font-weight: 700;
+  }
+
+  .actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-top: 8px;
+  }
+
+  .actions button {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 22px 10px 16px;
+    border-radius: 999px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: background-color 0.15s ease, transform 0.1s ease;
+  }
+
+  .actions button:active {
+    transform: scale(0.97);
+  }
+
+  .play {
+    border: 0;
+    background: var(--accent);
+    color: var(--on-accent);
+  }
+
+  .play:hover {
+    background: var(--accent-strong);
+  }
+
+  .shuffle {
+    border: 1px solid var(--text-faint);
+    background: transparent;
+  }
+
+  .shuffle:hover {
+    border-color: var(--text);
   }
 
   @media (max-width: 760px) {

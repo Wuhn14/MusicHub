@@ -8,14 +8,22 @@
     /** Per-album overrides, used by the local library. */
     hrefFor?: (album: AlbumSummary) => string;
     coverFor?: (album: AlbumSummary) => string;
+    /** When set, every card gets a play button calling it. */
+    onplay?: (album: AlbumSummary) => void;
   }
 
-  let { albums, showArtist = true, hrefFor, coverFor }: Props = $props();
+  let { albums, showArtist = true, hrefFor, coverFor, onplay }: Props = $props();
 </script>
 
 <ul class="grid">
   {#each albums as album (album.id)}
-    <AlbumCard {album} {showArtist} href={hrefFor?.(album)} coverId={coverFor?.(album)} />
+    <AlbumCard
+      {album}
+      {showArtist}
+      href={hrefFor?.(album)}
+      coverId={coverFor?.(album)}
+      onplay={onplay ? () => onplay(album) : undefined}
+    />
   {/each}
 </ul>
 

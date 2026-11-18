@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { Snippet } from 'svelte';
+  import PlayerBar from './PlayerBar.svelte';
 
   interface Props {
     /** Navigation entry to highlight, if any. */
@@ -93,31 +94,7 @@
     </div>
   </main>
 
-  <footer class="player" aria-label="Lecteur">
-    <div class="now">
-      <div class="art" aria-hidden="true">
-        <svg viewBox="0 0 24 24">
-          <path fill="currentColor" d="M12 3v10.55A4 4 0 1 0 14 17V7h4V3h-6Z" />
-        </svg>
-      </div>
-      <div class="now-text">
-        <p class="now-title">Aucune lecture en cours</p>
-        <p class="now-sub">Choisis un album pour commencer</p>
-      </div>
-    </div>
-    <div class="controls" aria-hidden="true">
-      <span class="ctrl">
-        <svg viewBox="0 0 24 24"><path fill="currentColor" d="M6 6h2v12H6V6Zm3.5 6 8.5 6V6l-8.5 6Z" /></svg>
-      </span>
-      <span class="ctrl play">
-        <svg viewBox="0 0 24 24"><path fill="currentColor" d="M8 5v14l11-7L8 5Z" /></svg>
-      </span>
-      <span class="ctrl">
-        <svg viewBox="0 0 24 24"><path fill="currentColor" d="M16 6h2v12h-2V6ZM6 18l8.5-6L6 6v12Z" /></svg>
-      </span>
-    </div>
-    <div class="spacer"></div>
-  </footer>
+  <PlayerBar />
 </div>
 
 <style>
@@ -245,87 +222,6 @@
     padding: 32px;
   }
 
-  .player {
-    grid-area: player;
-    display: grid;
-    grid-template-columns: 1fr auto 1fr;
-    align-items: center;
-    gap: 16px;
-    padding: 0 16px;
-    background: var(--bg-sidebar);
-  }
-
-  .now {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    min-width: 0;
-  }
-
-  .art {
-    flex: none;
-    display: grid;
-    place-items: center;
-    width: 48px;
-    height: 48px;
-    border-radius: 6px;
-    background: var(--surface);
-    color: var(--text-faint);
-  }
-
-  .art svg {
-    width: 22px;
-    height: 22px;
-  }
-
-  .now-text {
-    min-width: 0;
-  }
-
-  .now-title,
-  .now-sub {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .now-title {
-    font-size: 0.875rem;
-    font-weight: 600;
-    color: var(--text-muted);
-  }
-
-  .now-sub {
-    font-size: 0.75rem;
-    color: var(--text-faint);
-  }
-
-  .controls {
-    display: flex;
-    align-items: center;
-    gap: 16px;
-    color: var(--text-faint);
-  }
-
-  .ctrl {
-    display: grid;
-    place-items: center;
-    width: 32px;
-    height: 32px;
-  }
-
-  .ctrl svg {
-    width: 20px;
-    height: 20px;
-  }
-
-  .ctrl.play {
-    width: 36px;
-    height: 36px;
-    border-radius: 50%;
-    background: var(--surface-hover);
-  }
-
   /* Narrow screens: top brand bar, content, player, then a bottom tab bar. */
   @media (max-width: 760px) {
     .shell {
@@ -397,25 +293,6 @@
 
     .page {
       padding: 16px;
-    }
-
-    .player {
-      grid-template-columns: minmax(0, 1fr) auto;
-      height: 64px;
-      margin: 0 8px 6px;
-      padding: 0 8px;
-      border-radius: var(--radius);
-      background: var(--surface);
-    }
-
-    .art {
-      width: 40px;
-      height: 40px;
-    }
-
-    .controls .ctrl:not(.play),
-    .spacer {
-      display: none;
     }
   }
 </style>
