@@ -147,11 +147,23 @@ class Player {
   private saveTimer: ReturnType<typeof setTimeout> | undefined;
   private lastSave = 0;
   private lastPositionState = 0;
+  // Set by pause(), cleared by play() and load(): a "playing" event that
+  // arrives after the user paused must not flip the state back.
+  private userPaused = false;
 
   constructor() {
     if (typeof window === 'undefined') return;
     this.restore();
     window.addEventListener('pagehide', () => this.saveNow());
+    // Mobile browsers may kill a hidden page without any pagehide.
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'hidden') this.saveNow();
+    });
+  }
+
+  /** True when the loaded stream is converted: seeking restarts it. */
+  get converted(): boolean {
+    return this.loaded && this.loadedQuality !== 'original';
   }
 
   // ---- Public API -------------------------------------------------------
@@ -213,15 +225,19 @@ class Player {
       this.load(this.position, true);
       return;
     }
+    this.userPaused = false;
     this.playing = true;
     this.startAudio();
+    this.updatePositionState();
   }
 
   pause(): void {
     this.cancelSkip();
+    this.userPaused = true;
     this.playing = false;
     this.buffering = false;
     this.audio?.pause();
+    this.updatePositionState();
     this.saveSoon();
   }
 
@@ -398,6 +414,11 @@ class Player {
     });
     a.addEventListener('playing', () => {
       this.buffering = false;
+      if (a.paused || this.userPaused) {
+        // A late event from a play() the user has since paused.
+        if (!a.paused) a.pause();
+        return;
+      }
       this.playing = true;
       this.updatePositionState();
     });
@@ -409,6 +430,8 @@ class Player {
       if (a.paused && !a.ended && this.playing) {
         this.playing = false;
         this.buffering = false;
+        this.updatePositionState();
+        this.saveSoon();
       }
     });
     a.addEventListener('ended', () => this.onEnded());
@@ -441,6 +464,7 @@ class Player {
     this.position = s;
     this.playing = autoplay;
     this.buffering = autoplay;
+    this.userPaused = !autoplay;
     this.updateMetadata();
     this.saveSoon();
     if (autoplay) this.startAudio();

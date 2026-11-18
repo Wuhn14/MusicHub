@@ -14,6 +14,41 @@
   let dragging = $state(false);
   let dragValue = $state(0);
 
+  // Keyboard seeks on a converted stream are grouped: each one restarts the
+  // conversion, so only the last key press of a burst seeks.
+  const keySeekDelayMs = 350;
+  let fromKeyboard = false;
+  let keyTimer: ReturnType<typeof setTimeout> | undefined;
+
+  function seekNow(seconds: number): void {
+    clearTimeout(keyTimer);
+    keyTimer = undefined;
+    dragging = false;
+    player.seek(seconds);
+  }
+
+  function changed(seconds: number): void {
+    if (fromKeyboard && player.converted) {
+      dragging = true;
+      dragValue = seconds;
+      clearTimeout(keyTimer);
+      keyTimer = setTimeout(() => seekNow(seconds), keySeekDelayMs);
+      return;
+    }
+    seekNow(seconds);
+  }
+
+  /** Ends a drag that no change event will close (released outside, focus lost). */
+  function release(): void {
+    if (keyTimer !== undefined) {
+      seekNow(dragValue);
+      return;
+    }
+    dragging = false;
+  }
+
+  $effect(() => () => clearTimeout(keyTimer));
+
   const max = $derived(player.duration);
   const value = $derived(Math.min(dragging ? dragValue : player.position, max || 0));
   const pct = $derived(max > 0 ? (value / max) * 100 : 0);
@@ -31,14 +66,18 @@
     aria-label="Position dans le titre"
     aria-valuetext="{formatClock(value)} sur {formatClock(max)}"
     style:--pct="{pct}%"
+    onkeydown={() => (fromKeyboard = true)}
+    onpointerdown={() => (fromKeyboard = false)}
+    onpointerup={() => {
+      if (keyTimer === undefined) dragging = false;
+    }}
+    onpointercancel={release}
+    onblur={release}
     oninput={(e) => {
       dragging = true;
       dragValue = Number(e.currentTarget.value);
     }}
-    onchange={(e) => {
-      dragging = false;
-      player.seek(Number(e.currentTarget.value));
-    }}
+    onchange={(e) => changed(Number(e.currentTarget.value))}
   />
   <span class="time total">{formatClock(max)}</span>
 </div>

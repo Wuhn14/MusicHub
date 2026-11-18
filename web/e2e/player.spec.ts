@@ -115,3 +115,34 @@ test('album cards have a play button', async ({ page }) => {
   await page.getByRole('button', { name: `Lire ${fixtureAlbum.album}` }).click();
   await expect(bar(page).getByText(first.title)).toBeVisible();
 });
+
+test('keyboard seeks on a converted stream are grouped, and pausing updates the media session', async ({ page }) => {
+  await openAlbum(page);
+  await page.getByRole('button', { name: 'Lire', exact: true }).click();
+  await expect(bar(page).getByRole('button', { name: 'Pause' })).toBeVisible();
+  const converted = page.waitForRequest((r) => r.url().includes('quality=128'));
+  await bar(page).getByLabel('Qualité de lecture').selectOption('128');
+  await converted;
+  await expect.poll(() => position(page), { timeout: 10_000 }).toBeGreaterThanOrEqual(1);
+
+  // Five quick presses restart the conversion once, at the last position.
+  const seeks: string[] = [];
+  page.on('request', (r) => {
+    if (r.url().includes('quality=128&start=')) seeks.push(r.url());
+  });
+  const slider = bar(page).getByRole('slider', { name: 'Position dans le titre' });
+  await slider.focus();
+  for (let i = 0; i < 5; i++) await page.keyboard.press('ArrowRight');
+  await expect.poll(() => seeks.length, { timeout: 5_000 }).toBe(1);
+  await page.waitForTimeout(800);
+  expect(seeks).toHaveLength(1);
+  await expect(bar(page).getByRole('button', { name: 'Pause' })).toBeVisible();
+
+  // Pausing says so to the operating system.
+  await bar(page).getByRole('button', { name: 'Pause' }).click();
+  await expect(bar(page).getByRole('button', { name: 'Lecture' })).toBeVisible();
+  expect(await page.evaluate(() => navigator.mediaSession.playbackState)).toBe('paused');
+  // A late "playing" event does not resume the player.
+  await page.waitForTimeout(500);
+  await expect(bar(page).getByRole('button', { name: 'Lecture' })).toBeVisible();
+});
