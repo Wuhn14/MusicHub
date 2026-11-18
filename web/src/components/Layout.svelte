@@ -3,7 +3,7 @@
 
   interface Props {
     /** Navigation entry to highlight, if any. */
-    active: 'home' | 'search' | 'settings' | null;
+    active: 'home' | 'search' | 'library' | 'settings' | null;
     /** Changes on every navigation; used to reset the scroll position. */
     pageKey: string;
     children: Snippet;
@@ -50,6 +50,18 @@
               />
             </svg>
             <span>Recherche</span>
+          </a>
+        </li>
+        <li>
+          <a
+            href="/library"
+            class:active={active === 'library'}
+            aria-current={active === 'library' ? 'page' : undefined}
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path fill="currentColor" d="M4 4h3v16H4V4Zm5 0h3v16H9V4Zm5.2.6 2.9-.8 3.7 15.6-2.9.8-3.7-15.6Z" />
+            </svg>
+            <span>Bibliothèque</span>
           </a>
         </li>
         <li>

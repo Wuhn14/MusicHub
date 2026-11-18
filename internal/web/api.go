@@ -48,6 +48,7 @@ type Deps struct {
 	Covers   CoverGetter
 	Settings SettingsService
 	Tools    ToolStatusReader
+	Library  LibraryReader
 }
 
 type api struct {
@@ -55,11 +56,12 @@ type api struct {
 	covers   CoverGetter
 	settings SettingsService
 	tools    ToolStatusReader
+	lib      LibraryReader
 }
 
 // NewAPI returns the handler serving every /api route.
 func NewAPI(d Deps) http.Handler {
-	a := &api{cat: d.Catalog, covers: d.Covers, settings: d.Settings, tools: d.Tools}
+	a := &api{cat: d.Catalog, covers: d.Covers, settings: d.Settings, tools: d.Tools, lib: d.Library}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/search", requires(d.Catalog != nil, a.search))
 	mux.HandleFunc("GET /api/artists/{id}", requires(d.Catalog != nil, a.artist))
@@ -68,6 +70,12 @@ func NewAPI(d Deps) http.Handler {
 	mux.HandleFunc("GET /api/settings", requires(d.Settings != nil, a.getSettings))
 	mux.HandleFunc("PUT /api/settings", requires(d.Settings != nil, a.putSettings))
 	mux.HandleFunc("GET /api/system", requires(d.Tools != nil, a.system))
+	mux.HandleFunc("GET /api/library/albums", requires(d.Library != nil, a.libAlbums))
+	mux.HandleFunc("GET /api/library/albums/{key}", requires(d.Library != nil, a.libAlbum))
+	mux.HandleFunc("GET /api/library/artists", requires(d.Library != nil, a.libArtists))
+	mux.HandleFunc("GET /api/library/tracks", requires(d.Library != nil, a.libTracks))
+	mux.HandleFunc("GET /api/library/status", requires(d.Library != nil, a.libStatus))
+	mux.HandleFunc("POST /api/library/scan", requires(d.Library != nil, a.libScan))
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "Introuvable.")
 	})

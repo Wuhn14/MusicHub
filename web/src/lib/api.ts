@@ -172,3 +172,86 @@ export async function getSystem(signal?: AbortSignal): Promise<ToolStatus[]> {
   const res = await getJSON<{ tools: ToolStatus[] }>('/api/system', signal);
   return res.tools;
 }
+
+// Local library.
+
+export type LibrarySort = 'added' | 'name' | 'year';
+
+export interface LibAlbum {
+  key: string;
+  title: string;
+  artist: string;
+  year: string;
+  coverUrl: string;
+  /** MusicBrainz release group id; empty when the album is not identified. */
+  albumId: string;
+  trackCount: number;
+  durationMs: number;
+  local: boolean;
+}
+
+export interface LibArtist {
+  name: string;
+  albumCount: number;
+  trackCount: number;
+}
+
+export interface LibTrack {
+  fileId: string;
+  title: string;
+  artist: string;
+  album: string;
+  albumKey: string;
+  disc: number;
+  position: number;
+  durationMs: number;
+  recordingId: string;
+  local: boolean;
+  status: string;
+  coverUrl: string;
+}
+
+export interface LibAlbumPage extends LibAlbum {
+  tracks: LibTrack[];
+}
+
+export interface ScanReport {
+  seen: number;
+  added: number;
+  updated: number;
+  unreadable: number;
+  missing: number;
+  errors: number;
+}
+
+export interface ScanStatus {
+  running: boolean;
+  lastRun: string;
+  lastError: string;
+  lastReport: ScanReport;
+}
+
+export async function getLibraryAlbums(sort: LibrarySort, signal?: AbortSignal): Promise<LibAlbum[]> {
+  return (await getJSON<{ albums: LibAlbum[] }>(`/api/library/albums?sort=${sort}`, signal)).albums;
+}
+
+export async function getLibraryArtists(signal?: AbortSignal): Promise<LibArtist[]> {
+  return (await getJSON<{ artists: LibArtist[] }>('/api/library/artists', signal)).artists;
+}
+
+export async function getLibraryTracks(sort: LibrarySort, q: string, signal?: AbortSignal): Promise<LibTrack[]> {
+  const url = `/api/library/tracks?sort=${sort}&q=${encodeURIComponent(q)}`;
+  return (await getJSON<{ tracks: LibTrack[] }>(url, signal)).tracks;
+}
+
+export function getLibraryAlbum(key: string, signal?: AbortSignal): Promise<LibAlbumPage> {
+  return getJSON(`/api/library/albums/${encodeURIComponent(key)}`, signal);
+}
+
+export function getScanStatus(signal?: AbortSignal): Promise<ScanStatus> {
+  return getJSON('/api/library/status', signal);
+}
+
+export async function startScan(): Promise<void> {
+  await requestJSON<unknown>('/api/library/scan', { method: 'POST' });
+}

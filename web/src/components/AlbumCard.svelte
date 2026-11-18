@@ -7,16 +7,20 @@
     album: AlbumSummary;
     /** Show the artist name in the subtitle (hidden on the artist page). */
     showArtist?: boolean;
+    /** Overrides the link target (default: the catalog album page). */
+    href?: string;
+    /** Overrides the id used for the cover (empty shows the placeholder). */
+    coverId?: string;
   }
 
-  let { album, showArtist = true }: Props = $props();
+  let { album, showArtist = true, href, coverId }: Props = $props();
 
   const meta = $derived(albumMeta(album.firstReleaseDate, album.primaryType, album.secondaryTypes));
 </script>
 
 <li class="card">
-  <a class="link" href="/album/{album.id}">
-    <Cover albumId={album.id} size={250} alt="Pochette de {album.title}" />
+  <a class="link" href={href ?? `/album/${album.id}`}>
+    <Cover albumId={coverId ?? album.id} size={250} alt="Pochette de {album.title}" />
     <span class="title" title={album.title}>{album.title}</span>
   </a>
   <p class="sub">

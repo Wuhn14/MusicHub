@@ -79,7 +79,7 @@ func run() error {
 
 	srv := &http.Server{
 		Addr:              fmt.Sprintf(":%d", cfg.Port),
-		Handler:           server.New(web.NewAPI(web.Deps{Catalog: cat, Covers: covers, Settings: settingsSvc, Tools: tools}), web.NewUI()),
+		Handler:           server.New(web.NewAPI(web.Deps{Catalog: cat, Covers: covers, Settings: settingsSvc, Tools: tools, Library: library.Service{Query: library.NewQuery(st), Runner: runner}}), web.NewUI()),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       120 * time.Second,
 		BaseContext:       func(net.Listener) context.Context { return ctx },

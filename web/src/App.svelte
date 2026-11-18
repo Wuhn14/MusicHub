@@ -5,6 +5,8 @@
   import Search from './routes/Search.svelte';
   import Artist from './routes/Artist.svelte';
   import Settings from './routes/Settings.svelte';
+  import Library from './routes/Library.svelte';
+  import LibraryAlbum from './routes/LibraryAlbum.svelte';
   import Album from './routes/Album.svelte';
   import NotFound from './routes/NotFound.svelte';
 
@@ -19,7 +21,7 @@
     }),
   );
 
-  const active = $derived(route.name === 'home' ? 'home' : route.name === 'search' ? 'search' : route.name === 'settings' ? 'settings' : null);
+  const active = $derived(route.name === 'home' ? 'home' : route.name === 'search' ? 'search' : route.name === 'settings' ? 'settings' : route.name === 'library' || route.name === 'libraryAlbum' ? 'library' : null);
 </script>
 
 <Layout {active} pageKey={String(visit)}>
@@ -30,6 +32,10 @@
       <Search initialQuery={route.query} />
     {:else if route.name === 'settings'}
       <Settings />
+    {:else if route.name === 'library'}
+      <Library tab={route.tab} sort={route.sort} q={route.q} artist={route.artist} />
+    {:else if route.name === 'libraryAlbum'}
+      <LibraryAlbum key={route.key} />
     {:else if route.name === 'artist'}
       <Artist id={route.id} />
     {:else if route.name === 'album'}

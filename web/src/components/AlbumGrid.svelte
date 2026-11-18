@@ -5,14 +5,17 @@
   interface Props {
     albums: AlbumSummary[];
     showArtist?: boolean;
+    /** Per-album overrides, used by the local library. */
+    hrefFor?: (album: AlbumSummary) => string;
+    coverFor?: (album: AlbumSummary) => string;
   }
 
-  let { albums, showArtist = true }: Props = $props();
+  let { albums, showArtist = true, hrefFor, coverFor }: Props = $props();
 </script>
 
 <ul class="grid">
   {#each albums as album (album.id)}
-    <AlbumCard {album} {showArtist} />
+    <AlbumCard {album} {showArtist} href={hrefFor?.(album)} coverId={coverFor?.(album)} />
   {/each}
 </ul>
 

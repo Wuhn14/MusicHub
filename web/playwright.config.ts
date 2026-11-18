@@ -8,6 +8,7 @@ const appPort = 18090;
 const fakePort = 18081;
 const fakeURL = `http://127.0.0.1:${fakePort}`;
 const dataDir = mkdtempSync(join(tmpdir(), 'musichub-e2e-'));
+const musicDir = mkdtempSync(join(tmpdir(), 'musichub-e2e-music-'));
 
 export default defineConfig({
   testDir: './e2e',
@@ -36,6 +37,7 @@ export default defineConfig({
       env: {
         MUSICHUB_PORT: String(appPort),
         MUSICHUB_DATA: dataDir,
+        MUSICHUB_MUSIC: musicDir,
         MUSICHUB_MB_URL: fakeURL,
         MUSICHUB_CAA_URL: fakeURL,
       },

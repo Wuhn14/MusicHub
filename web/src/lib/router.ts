@@ -6,10 +6,15 @@ export type Route =
   | { name: 'home' }
   | { name: 'search'; query: string }
   | { name: 'settings' }
+  | { name: 'library'; tab: LibraryTab; sort: string; q: string; artist: string }
+  | { name: 'libraryAlbum'; key: string }
   | { name: 'artist'; id: string }
   | { name: 'album'; id: string }
   | { name: 'notFound' };
 
+export type LibraryTab = 'albums' | 'artists' | 'tracks';
+
+const libraryAlbumPath = /^\/library\/album\/([^/]+)\/?$/;
 const artistPath = /^\/artist\/([^/]+)\/?$/;
 const albumPath = /^\/album\/([^/]+)\/?$/;
 
@@ -33,7 +38,17 @@ export function parseRoute(loc: { pathname: string; search: string }): Route {
   if (path === '/settings' || path === '/settings/') {
     return { name: 'settings' };
   }
-  let m = artistPath.exec(path);
+  if (path === '/library' || path === '/library/') {
+    const p = new URLSearchParams(loc.search);
+    const t = p.get('tab');
+    const tab: LibraryTab = t === 'artists' || t === 'tracks' ? t : 'albums';
+    return { name: 'library', tab, sort: p.get('sort') ?? '', q: p.get('q') ?? '', artist: p.get('artist') ?? '' };
+  }
+  let m = libraryAlbumPath.exec(path);
+  if (m) {
+    return { name: 'libraryAlbum', key: decode(m[1]) };
+  }
+  m = artistPath.exec(path);
   if (m) {
     return { name: 'artist', id: decode(m[1]) };
   }
@@ -59,12 +74,12 @@ export function navigate(href: string): void {
  * Updates the query string of the current entry without re-rendering, so
  * that reloading or coming back to the search page restores the query.
  */
-export function replaceQuery(q: string): void {
+export function replaceQuery(q: string, name = 'q'): void {
   const url = new URL(location.href);
   if (q) {
-    url.searchParams.set('q', q);
+    url.searchParams.set(name, q);
   } else {
-    url.searchParams.delete('q');
+    url.searchParams.delete(name);
   }
   if (url.href !== location.href) {
     history.replaceState(history.state, '', url);
