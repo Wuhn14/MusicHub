@@ -8,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -174,7 +173,7 @@ func TestStatusAndMissingFile(t *testing.T) {
 }
 
 // holdTranscoder writes a few bytes then blocks until the request is cancelled.
-type holdTranscoder struct{ mu sync.Mutex }
+type holdTranscoder struct{}
 
 func (h *holdTranscoder) Transcode(ctx context.Context, _ string, _, _ int, w io.Writer) error {
 	if _, err := w.Write([]byte("ID3")); err != nil {

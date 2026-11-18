@@ -83,7 +83,7 @@ func (s *Scanner) Scan(ctx context.Context) (Report, error) {
 	}
 
 	if c, ok := s.tools.(availabilityChecker); ok && !c.FFprobeAvailable() {
-		return rep, errors.New("ffprobe est introuvable : l'analyse des fichiers est impossible.")
+		return rep, errors.New("ffprobe est introuvable : l'analyse des fichiers est impossible")
 	}
 
 	started := s.now()
