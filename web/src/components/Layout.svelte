@@ -1,10 +1,11 @@
 <script lang="ts">
   import type { Snippet } from 'svelte';
   import PlayerBar from './PlayerBar.svelte';
+  import { identifyCount } from '../lib/identify.svelte';
 
   interface Props {
     /** Navigation entry to highlight, if any. */
-    active: 'home' | 'search' | 'library' | 'upload' | 'settings' | null;
+    active: 'home' | 'search' | 'library' | 'upload' | 'identify' | 'settings' | null;
     /** Changes on every navigation; used to reset the scroll position. */
     pageKey: string;
     children: Snippet;
@@ -13,6 +14,10 @@
   let { active, pageKey, children }: Props = $props();
 
   let main = $state<HTMLElement>();
+
+  $effect(() => identifyCount.watch());
+
+  const badge = $derived(identifyCount.count > 99 ? '99+' : String(identifyCount.count));
 
   $effect(() => {
     void pageKey;
@@ -75,6 +80,27 @@
               <path fill="currentColor" d="M11 4h2v7h7v2h-7v7h-2v-7H4v-2h7V4Z" />
             </svg>
             <span>Ajouter</span>
+          </a>
+        </li>
+        <li>
+          <a
+            href="/identify"
+            class:active={active === 'identify'}
+            aria-current={active === 'identify' ? 'page' : undefined}
+            aria-label={identifyCount.count > 0 ? `À identifier, ${identifyCount.count} fichier${identifyCount.count > 1 ? 's' : ''}` : undefined}
+          >
+            <span class="icon-wrap">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path
+                  fill="currentColor"
+                  d="M11.95 18q.53 0 .9-.37t.37-.9-.37-.9-.9-.37-.9.37-.37.9.37.9.9.37Zm-.92-3.85h1.85q0-.82.19-1.3.19-.48 1.06-1.3.65-.65 1.03-1.24.38-.59.38-1.41 0-1.4-1.03-2.15T12.1 6q-1.43 0-2.31.75T8.55 8.55l1.65.65q.13-.48.6-1.04.47-.56 1.43-.56.85 0 1.28.47.43.47.43 1.03 0 .53-.32 1-.32.47-.8.88-1.1.98-1.35 1.48-.25.5-.25 1.69ZM12 22q-2.08 0-3.9-.79t-3.18-2.14Q3.58 17.73 2.79 15.9 2 14.08 2 12t.79-3.9q.79-1.83 2.14-3.18Q6.27 3.58 8.1 2.79 9.92 2 12 2t3.9.79q1.83.79 3.18 2.14 1.35 1.35 2.14 3.18Q22 9.92 22 12t-.79 3.9q-.79 1.83-2.14 3.18-1.35 1.35-3.18 2.14Q14.08 22 12 22Z"
+                />
+              </svg>
+              {#if identifyCount.count > 0}
+                <span class="badge" aria-hidden="true">{badge}</span>
+              {/if}
+            </span>
+            <span>À identifier</span>
           </a>
         </li>
         <li>
@@ -217,6 +243,28 @@
     flex: none;
   }
 
+  .icon-wrap {
+    position: relative;
+    display: flex;
+    flex: none;
+  }
+
+  .badge {
+    position: absolute;
+    top: -6px;
+    right: -10px;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 5px;
+    border-radius: 999px;
+    background: var(--accent);
+    color: var(--on-accent);
+    font-size: 0.68rem;
+    font-weight: 800;
+    line-height: 18px;
+    text-align: center;
+  }
+
   .main {
     grid-area: main;
     overflow-y: auto;
@@ -274,6 +322,7 @@
 
     nav a {
       height: 100%;
+      min-width: 0;
       flex-direction: column;
       justify-content: center;
       gap: 2px;
@@ -286,6 +335,17 @@
     nav a:hover,
     nav a.active {
       background: transparent;
+    }
+
+    nav a > span:last-child {
+      max-width: 100%;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .badge {
+      right: -12px;
     }
 
     .main {

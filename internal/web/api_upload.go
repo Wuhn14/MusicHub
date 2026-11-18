@@ -25,6 +25,7 @@ type UploadReceiver interface {
 type FileReader interface {
 	GetFile(ctx context.Context, id string) (store.File, error)
 	GetAlbum(ctx context.Context, id string) (store.Album, error)
+	GetLocalTrack(ctx context.Context, id string) (store.LocalTrack, error)
 }
 
 type uploadedFileJSON struct {
@@ -120,6 +121,11 @@ func (a *api) fileStatus(w http.ResponseWriter, r *http.Request) {
 	out := fileStatusJSON{ID: f.ID, Status: f.Status}
 	if f.Status == store.FileIdentified || f.Status == store.FileLocal {
 		out.Title, out.Artist, out.Album = f.Tags.Title, f.Tags.Artist, f.Tags.Album
+		if f.Status == store.FileLocal {
+			if lt, err := a.files.GetLocalTrack(r.Context(), f.LocalTrackID); err == nil {
+				out.Title, out.Artist, out.Album = lt.Title, lt.Artist, lt.Album
+			}
+		}
 		if f.AlbumID != "" {
 			if al, err := a.files.GetAlbum(r.Context(), f.AlbumID); err == nil {
 				out.Album = al.Title

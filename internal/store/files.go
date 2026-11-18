@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -42,10 +43,13 @@ type File struct {
 	Status               string
 	RecordingID, AlbumID string
 	LocalTrackID         string
-	Disc, Position       int
-	LastSeen             time.Time
-	MissingSince         time.Time
-	AddedAt              time.Time
+	// UploadName is the name an uploaded file had on the sender's device
+	// (display only, never a path); empty for dropped files.
+	UploadName     string
+	Disc, Position int
+	LastSeen       time.Time
+	MissingSince   time.Time
+	AddedAt        time.Time
 }
 
 // FileFilter narrows ListFiles. Empty fields match everything.
@@ -53,11 +57,12 @@ type FileFilter struct {
 	Status      string
 	Path        string
 	RecordingID string
+	Origin      string
 }
 
 const fileCols = `id, path, origin, size, mtime, format, codec, bitrate, sample_rate,
 duration_ms, lossless, tags_json, status, recording_id, album_id, local_track_id,
-disc, position, last_seen, missing_since, added_at`
+disc, position, last_seen, missing_since, added_at, upload_name`
 
 func newFileID() string {
 	b := make([]byte, 16)
@@ -84,7 +89,7 @@ func scanFile(r rowScanner) (File, error) {
 	err := r.Scan(&f.ID, &f.Path, &f.Origin, &f.Size, &mtime, &f.Format, &f.Codec,
 		&f.BitRate, &f.SampleRate, &f.DurationMs, &lossless, &tags, &f.Status,
 		&f.RecordingID, &f.AlbumID, &f.LocalTrackID, &f.Disc, &f.Position,
-		&lastSeen, &missing, &added)
+		&lastSeen, &missing, &added, &f.UploadName)
 	if err != nil {
 		return File{}, err
 	}
@@ -206,11 +211,11 @@ func (s *Store) InsertUploadedFile(ctx context.Context, f File) (File, error) {
 	_, err = s.db.ExecContext(ctx, `
 INSERT INTO files (id, path, origin, size, mtime, format, codec, bitrate, sample_rate,
   duration_ms, lossless, tags_json, status, recording_id, album_id, local_track_id,
-  disc, position, last_seen, missing_since, added_at)
-VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+  disc, position, last_seen, missing_since, added_at, upload_name)
+VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		f.ID, f.Path, f.Origin, f.Size, f.Mtime.UnixNano(), f.Format, f.Codec, f.BitRate,
 		f.SampleRate, f.DurationMs, f.Lossless, string(tags), f.Status, "", "", "",
-		f.Disc, f.Position, optTime(f.LastSeen), "", formatTime(f.AddedAt))
+		f.Disc, f.Position, optTime(f.LastSeen), "", formatTime(f.AddedAt), f.UploadName)
 	if err != nil {
 		return File{}, err
 	}
@@ -251,6 +256,10 @@ func (s *Store) ListFiles(ctx context.Context, flt FileFilter) ([]File, error) {
 	if flt.RecordingID != "" {
 		where = append(where, "recording_id = ?")
 		args = append(args, flt.RecordingID)
+	}
+	if flt.Origin != "" {
+		where = append(where, "origin = ?")
+		args = append(args, flt.Origin)
 	}
 	if len(where) > 0 {
 		q += " WHERE " + strings.Join(where, " AND ")
@@ -306,13 +315,19 @@ WHERE id = ?`, formatTime(seen), id); err != nil {
 
 // MarkMissing flags as missing every non-missing file last seen before
 // seenSince, remembering its status so it can be restored. It returns how
-// many files were flagged. Uploaded files still pending live in the incoming
-// folder, which the scanner never walks, so they are never flagged.
-func (s *Store) MarkMissing(ctx context.Context, seenSince, now time.Time) (int, error) {
+// many files were flagged. Uploaded files that are still pending, or whose
+// path is still under keepUnder (the incoming folder, which the scanner never
+// walks), are never flagged; an empty keepUnder exempts only pending uploads.
+func (s *Store) MarkMissing(ctx context.Context, seenSince, now time.Time, keepUnder string) (int, error) {
+	prefix := ""
+	if keepUnder != "" {
+		prefix = strings.TrimRight(keepUnder, `/\`) + string(filepath.Separator)
+	}
 	res, err := s.db.ExecContext(ctx, `
 UPDATE files SET prev_status = status, status = 'missing', missing_since = ?
 WHERE status <> 'missing' AND last_seen < ?
-  AND NOT (origin = 'uploaded' AND status = 'pending')`, formatTime(now), formatTime(seenSince))
+  AND NOT (origin = 'uploaded' AND (status = 'pending' OR (? <> '' AND substr(path, 1, length(?)) = ?)))`,
+		formatTime(now), formatTime(seenSince), prefix, prefix, prefix)
 	if err != nil {
 		return 0, err
 	}
@@ -432,4 +447,176 @@ GROUP BY al.id`, artistID)
 		out[id] = n
 	}
 	return out, rows.Err()
+}
+
+// ErrPathTaken is returned by SetFilePath when another file row already uses
+// the path.
+var ErrPathTaken = errors.New("store: path already used by another file")
+
+// SetFilePath records a new path for a file, keeping its id, origin and
+// status. It returns ErrPathTaken when another row has that path and
+// ErrNotFound when the file is gone.
+func (s *Store) SetFilePath(ctx context.Context, id, path string) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var other int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM files WHERE path = ? AND id <> ?`, path, id).Scan(&other); err != nil {
+		return err
+	}
+	if other > 0 {
+		return ErrPathTaken
+	}
+	res, err := tx.ExecContext(ctx, `UPDATE files SET path = ? WHERE id = ?`, path, id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return tx.Commit()
+}
+
+// FinishPlacing records the state of a file right after it was moved or
+// retagged: its size and modification date as now found on the disk, the
+// tags written into it (merged over the stored ones; nil when none were
+// written) and the time it was seen. A file flagged missing meanwhile (a
+// scan ran while it was being moved) regains its previous status. With
+// matching size and date, the next scan does not read the file again.
+func (s *Store) FinishPlacing(ctx context.Context, id string, size int64, mtime time.Time, written *media.Tags, seen time.Time) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	f, err := scanFile(tx.QueryRowContext(ctx, `SELECT `+fileCols+` FROM files WHERE id = ?`, id))
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	tags := f.Tags
+	if written != nil {
+		mergeTags(&tags, *written)
+	}
+	tagsJSON, err := json.Marshal(tags)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `
+UPDATE files SET size = ?, mtime = ?, tags_json = ?, last_seen = ?, missing_since = '',
+  status = CASE WHEN status = 'missing' THEN COALESCE(NULLIF(prev_status, ''), 'pending') ELSE status END,
+  prev_status = CASE WHEN status = 'missing' THEN '' ELSE prev_status END
+WHERE id = ?`, size, mtime.UnixNano(), string(tagsJSON), formatTime(seen), id); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// mergeTags copies the non-empty fields of src over dst, as
+// media.Tools.WriteTags does in the file.
+func mergeTags(dst *media.Tags, src media.Tags) {
+	set := func(d *string, v string) {
+		if v != "" {
+			*d = v
+		}
+	}
+	set(&dst.Artist, src.Artist)
+	set(&dst.AlbumArtist, src.AlbumArtist)
+	set(&dst.Album, src.Album)
+	set(&dst.Title, src.Title)
+	set(&dst.Date, src.Date)
+	set(&dst.MBRecordingID, src.MBRecordingID)
+	set(&dst.MBReleaseGroupID, src.MBReleaseGroupID)
+	set(&dst.MBReleaseID, src.MBReleaseID)
+	set(&dst.MBArtistID, src.MBArtistID)
+	if src.Track > 0 {
+		dst.Track = src.Track
+	}
+	if src.Disc > 0 {
+		dst.Disc = src.Disc
+	}
+}
+
+// ErrNotUploaded is returned by DeletePendingUpload for a file that was not
+// uploaded (a file dropped in the music folder is never deleted).
+var ErrNotUploaded = errors.New("store: file was not uploaded")
+
+// DeletePendingUpload removes the row of an uploaded file that is still
+// pending, with its jobs and candidates, and returns it so the caller can
+// remove it from the disk. It returns ErrNotUploaded for a dropped file,
+// ErrNotPending when the file is no longer pending and ErrNotFound when it is
+// gone; nothing is deleted then.
+func (s *Store) DeletePendingUpload(ctx context.Context, id string) (File, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return File{}, err
+	}
+	defer tx.Rollback()
+	f, err := scanFile(tx.QueryRowContext(ctx, `SELECT `+fileCols+` FROM files WHERE id = ?`, id))
+	if errors.Is(err, sql.ErrNoRows) {
+		return File{}, ErrNotFound
+	}
+	if err != nil {
+		return File{}, err
+	}
+	switch {
+	case f.Origin != OriginUploaded:
+		return File{}, ErrNotUploaded
+	case f.Status != FilePending:
+		return File{}, ErrNotPending
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM files WHERE id = ? AND status = 'pending'`, id); err != nil {
+		return File{}, err
+	}
+	return f, tx.Commit()
+}
+
+// awaitingWhere selects the pending files that no identification job of the
+// given kind is still working on: those waiting for the user.
+const awaitingWhere = `f.status = 'pending'
+  AND NOT EXISTS (SELECT 1 FROM jobs j WHERE j.kind = ? AND j.file_id = f.id)`
+
+// CountPending returns how many pending files wait for the user (no job of
+// the given kind) and how many are still queued for automatic
+// identification.
+func (s *Store) CountPending(ctx context.Context, jobKind string) (awaiting, queued int, err error) {
+	err = s.db.QueryRowContext(ctx, `
+SELECT COALESCE(SUM(CASE WHEN j.id IS NULL THEN 1 ELSE 0 END), 0),
+       COALESCE(SUM(CASE WHEN j.id IS NULL THEN 0 ELSE 1 END), 0)
+FROM files f LEFT JOIN jobs j ON j.kind = ? AND j.file_id = f.id
+WHERE f.status = 'pending'`, jobKind).Scan(&awaiting, &queued)
+	return awaiting, queued, err
+}
+
+// ListAwaiting returns up to limit pending files that wait for the user (no
+// job of the given kind), oldest first.
+func (s *Store) ListAwaiting(ctx context.Context, jobKind string, limit int) ([]File, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT `+prefixed("f.", fileCols)+` FROM files f WHERE `+awaitingWhere+`
+ORDER BY f.added_at, f.path LIMIT ?`, jobKind, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []File
+	for rows.Next() {
+		f, err := scanFile(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, f)
+	}
+	return out, rows.Err()
+}
+
+// prefixed qualifies each column of a comma-separated list with p.
+func prefixed(p, cols string) string {
+	parts := strings.Split(cols, ",")
+	for i, c := range parts {
+		parts[i] = p + strings.TrimSpace(c)
+	}
+	return strings.Join(parts, ", ")
 }

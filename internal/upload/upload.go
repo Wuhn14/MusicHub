@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/Wuhn14/MusicHub/internal/media"
 	"github.com/Wuhn14/MusicHub/internal/settings"
@@ -92,6 +93,21 @@ func Extension(name string) (string, bool) {
 	}
 	ext := strings.ToLower(filepath.Ext(name))
 	return ext, allowedExts[ext]
+}
+
+// baseName is the last segment of a client-supplied file name, whatever
+// separator it uses, cut to 255 bytes. It is only ever displayed.
+func baseName(name string) string {
+	name = strings.ReplaceAll(name, "\\", "/")
+	if i := strings.LastIndex(name, "/"); i >= 0 {
+		name = name[i+1:]
+	}
+	name = strings.ToValidUTF8(name, "")
+	for len(name) > 255 {
+		_, size := utf8.DecodeLastRuneInString(name)
+		name = name[:len(name)-size]
+	}
+	return name
 }
 
 // CleanPartFiles removes the leftovers of interrupted uploads from dir
@@ -187,6 +203,7 @@ func (r *Receiver) Receive(ctx context.Context, name string, body io.Reader) (st
 		Path: base, Size: n, Mtime: now, Format: pr.Format, Codec: pr.Codec, BitRate: pr.BitRate,
 		SampleRate: pr.SampleRate, DurationMs: pr.DurationMs, Lossless: pr.Lossless, Tags: pr.Tags,
 		Disc: pr.Tags.Disc, Position: pr.Tags.Track, AddedAt: now, LastSeen: now,
+		UploadName: baseName(name),
 	})
 	if err != nil {
 		os.Remove(base)

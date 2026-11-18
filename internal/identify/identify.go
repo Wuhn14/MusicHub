@@ -78,6 +78,12 @@ type SettingsGetter interface {
 	Get(ctx context.Context) (settings.Settings, error)
 }
 
+// Placer files an identified or local file into the music folder
+// (*library.Organizer in production).
+type Placer interface {
+	Place(ctx context.Context, fileID string) (store.File, error)
+}
+
 // Deps are the services the identifier uses.
 type Deps struct {
 	Store    *store.Store
@@ -86,6 +92,9 @@ type Deps struct {
 	MB       RecordingFinder
 	Catalog  AlbumLoader
 	Settings SettingsGetter
+	// Placer, when not nil, files each file once it is identified or made
+	// local. A placing failure is logged and leaves the file where it is.
+	Placer Placer
 	// Now is the clock (time.Now in production).
 	Now func() time.Time
 }
@@ -198,6 +207,23 @@ func (id *Identifier) Identify(ctx context.Context, fileID string) (Result, erro
 	}
 
 	choice := chooseAlbum(m.hit.Releases, m.acoustRGs, f.Tags.MBReleaseGroupID, f.Tags.Album)
+	res, linked, err := id.link(ctx, f, m.hit.RecordingID, choice, m.source, set.Duplicates)
+	if err != nil && !linked {
+		if errors.Is(err, ErrSkipped) || errors.Is(err, store.ErrNotFound) {
+			return res, err
+		}
+		return keepPartial(err)
+	}
+	return res, err
+}
+
+// SourceManual is the Result.Source of a recording chosen by the user.
+const SourceManual = "manual"
+
+// link loads the chosen album into the catalog, links the file to the
+// recording, applies the duplicates rule and places the file. linked tells
+// whether the file was linked before an error happened.
+func (id *Identifier) link(ctx context.Context, f store.File, recordingID string, choice albumChoice, source, policy string) (res Result, linked bool, err error) {
 	albumID := choice.id
 	if albumID != "" {
 		if _, err := id.d.Catalog.Album(ctx, albumID); err != nil {
@@ -207,7 +233,7 @@ func (id *Identifier) Identify(ctx context.Context, fileID string) (Result, erro
 				slog.Warn("identification : album introuvable, titre relié sans album", "file", f.ID, "album", albumID)
 				albumID = ""
 			} else {
-				return keepPartial(wrapRemote(err))
+				return Result{}, false, wrapRemote(err)
 			}
 		}
 	}
@@ -215,18 +241,87 @@ func (id *Identifier) Identify(ctx context.Context, fileID string) (Result, erro
 	if disc <= 0 || pos <= 0 {
 		disc, pos = f.Tags.Disc, f.Tags.Track
 	}
-	if err := id.d.Store.LinkFile(ctx, f.ID, m.hit.RecordingID, albumID, disc, pos); err != nil {
-		return Result{}, notPending(err)
+	if err := id.d.Store.LinkFile(ctx, f.ID, recordingID, albumID, disc, pos); err != nil {
+		return Result{}, false, notPending(err)
 	}
-	res := Result{Status: store.FileIdentified, RecordingID: m.hit.RecordingID, AlbumID: albumID, Source: m.source}
-	// The file is linked: finish the duplicates step even if a shutdown starts
-	// now, so no half-resolved state is left behind.
-	dup, err := resolveDuplicates(context.WithoutCancel(ctx), id.d.Store, f.ID, set.Duplicates)
+	res = Result{Status: store.FileIdentified, RecordingID: recordingID, AlbumID: albumID, Source: source}
+	// The file is linked: finish the duplicates step and the placing even if
+	// a shutdown starts now, so no half-resolved state is left behind.
+	after := context.WithoutCancel(ctx)
+	dup, err := resolveDuplicates(after, id.d.Store, f.ID, policy)
 	if err != nil {
-		return res, fmt.Errorf("duplicates: %w", err)
+		return res, true, fmt.Errorf("duplicates: %w", err)
 	}
 	res.Duplicate = dup
-	return res, nil
+	if dup != DupDiscardedNew && dup != DupHiddenNew {
+		id.place(after, f.ID)
+	}
+	return res, true, nil
+}
+
+// place files the file through the Placer, logging a failure.
+func (id *Identifier) place(ctx context.Context, fileID string) {
+	if id.d.Placer == nil {
+		return
+	}
+	if _, err := id.d.Placer.Place(ctx, fileID); err != nil {
+		slog.Error("rangement impossible, le fichier reste à sa place actuelle", "file", fileID, "err", err)
+	}
+}
+
+// Choose links a pending file to the recording the user picked. albumID,
+// when given, is the release group to file it under if the recording
+// appears on it; otherwise the album is chosen with the same rule as the
+// automatic identification. The duplicates rule is applied and the file is
+// placed. It returns store.ErrNotPending when the file is no longer pending,
+// store.ErrNotFound when it is gone, and musicbrainz.ErrNotFound when the
+// recording does not exist; a remote failure satisfies IsTransient.
+func (id *Identifier) Choose(ctx context.Context, fileID, recordingID, albumID string) (Result, error) {
+	f, err := id.d.Store.GetFile(ctx, fileID)
+	if err != nil {
+		return Result{}, err
+	}
+	if f.Status != store.FilePending {
+		return Result{Status: f.Status}, store.ErrNotPending
+	}
+	set, err := id.d.Settings.Get(ctx)
+	if err != nil {
+		return Result{}, fmt.Errorf("reading settings: %w", err)
+	}
+	hit, err := id.d.MB.GetRecording(ctx, recordingID)
+	if err != nil {
+		if errors.Is(err, musicbrainz.ErrNotFound) {
+			return Result{}, err
+		}
+		return Result{}, wrapRemote(err)
+	}
+	rg := albumID
+	if rg == "" {
+		rg = f.Tags.MBReleaseGroupID
+	}
+	choice := chooseAlbum(hit.Releases, nil, rg, f.Tags.Album)
+	res, _, err := id.link(ctx, f, hit.RecordingID, choice, SourceManual, set.Duplicates)
+	if errors.Is(err, ErrSkipped) {
+		return res, store.ErrNotPending
+	}
+	return res, err
+}
+
+// CreateLocal describes a pending file as a local track (one MusicBrainz
+// does not know) and places it. It returns the stored local track and the
+// file as it is after placing; store.ErrNotPending when the file is no
+// longer pending and store.ErrNotFound when it is gone.
+func (id *Identifier) CreateLocal(ctx context.Context, fileID string, lt store.LocalTrack) (store.LocalTrack, store.File, error) {
+	if lt.CreatedAt.IsZero() {
+		lt.CreatedAt = id.d.Now()
+	}
+	stored, err := id.d.Store.CreateLocalTrack(ctx, fileID, lt)
+	if err != nil {
+		return store.LocalTrack{}, store.File{}, err
+	}
+	id.place(context.WithoutCancel(ctx), fileID)
+	f, err := id.d.Store.GetFile(context.WithoutCancel(ctx), fileID)
+	return stored, f, err
 }
 
 // notPending maps the store's guard error to ErrSkipped.

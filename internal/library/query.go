@@ -124,6 +124,10 @@ func (q *Query) load(ctx context.Context) (map[string]*group, error) {
 	if err != nil {
 		return nil, err
 	}
+	locals, err := q.st.ListLocalTracks(ctx)
+	if err != nil {
+		return nil, err
+	}
 	groups := map[string]*group{}
 	catalogAlbums := map[string]*store.Album{}
 	for _, f := range files {
@@ -138,7 +142,13 @@ func (q *Query) load(ctx context.Context) (map[string]*group, error) {
 		var (
 			key, title, artist, year, cover, albumID string
 			cat                                      *store.Album
+			local                                    *store.LocalTrack
 		)
+		if f.Status == store.FileLocal {
+			if lt, ok := locals[f.LocalTrackID]; ok {
+				local = &lt
+			}
+		}
 		if f.Status == store.FileIdentified && f.AlbumID != "" {
 			albumID = f.AlbumID
 			c, seen := catalogAlbums[albumID]
@@ -159,6 +169,21 @@ func (q *Query) load(ctx context.Context) (map[string]*group, error) {
 			title, artist = cat.Title, cat.ArtistName
 			year = yearFromDate(cat.FirstReleaseDate)
 			cover = "/api/covers/" + albumID
+		} else if local != nil {
+			// A local track: what the user typed replaces the file's tags.
+			albumArtist := strings.TrimSpace(local.AlbumArtist)
+			if albumArtist == "" {
+				albumArtist = strings.TrimSpace(local.Artist)
+			}
+			album := strings.TrimSpace(local.Album)
+			key = encodeKey(keyPrefixTag + norm(albumArtist) + keyTagSeparator + norm(album))
+			title, artist = album, albumArtist
+			if local.Year > 0 {
+				year = fmt.Sprintf("%04d", local.Year)
+			}
+			if local.CoverPath != "" {
+				cover = "/api/local-covers/" + local.ID
+			}
 		} else {
 			albumID = ""
 			albumArtist := strings.TrimSpace(f.Tags.AlbumArtist)
@@ -181,6 +206,9 @@ func (q *Query) load(ctx context.Context) (map[string]*group, error) {
 			groups[key] = g
 		}
 		a := &g.album
+		if a.CoverURL == "" && cover != "" {
+			a.CoverURL = cover
+		}
 		if cat == nil {
 			// Tagged albums: fill gaps from later files, and vote on the year.
 			if a.Title == noAlbumTitle && title != "" {
@@ -202,7 +230,7 @@ func (q *Query) load(ctx context.Context) (map[string]*group, error) {
 		if f.AddedAt.After(a.AddedAt) {
 			a.AddedAt = f.AddedAt
 		}
-		g.tracks = append(g.tracks, trackOf(f, g.album, cat))
+		g.tracks = append(g.tracks, trackOf(f, g.album, cat, local))
 	}
 	for _, g := range groups {
 		// Most common tag year; ties go to the earliest.
@@ -217,15 +245,16 @@ func (q *Query) load(ctx context.Context) (map[string]*group, error) {
 		}
 		for i := range g.tracks {
 			g.tracks[i].Album, g.tracks[i].Year = g.album.Title, g.album.Year
+			g.tracks[i].CoverURL = g.album.CoverURL
 		}
 	}
 	return groups, nil
 }
 
-// trackOf builds the list entry of a file. Tags give the title and artist
-// (a local track will override them once local identification exists); a
-// missing title falls back to the catalog track, then to the file name.
-func trackOf(f store.File, al LibAlbum, cat *store.Album) LibTrack {
+// trackOf builds the list entry of a file. The local track, when there is
+// one, gives the title and artist; otherwise the tags do, and a missing title
+// falls back to the catalog track, then to the file name.
+func trackOf(f store.File, al LibAlbum, cat *store.Album, local *store.LocalTrack) LibTrack {
 	t := LibTrack{
 		FileID: f.ID, Title: strings.TrimSpace(f.Tags.Title), Album: al.Title, AlbumKey: al.Key,
 		Disc: f.Disc, Position: f.Position, DurationMs: f.DurationMs, RecordingID: f.RecordingID,
@@ -251,6 +280,13 @@ func trackOf(f store.File, al LibAlbum, cat *store.Album) LibTrack {
 		t.Title = strings.TrimSuffix(base, filepath.Ext(base))
 	}
 	t.Artist = strings.TrimSpace(f.Tags.Artist)
+	if local != nil {
+		if v := strings.TrimSpace(local.Title); v != "" {
+			t.Title = v
+		}
+		t.Artist = strings.TrimSpace(local.Artist)
+		t.Disc, t.Position = local.Disc, local.Position
+	}
 	if t.Artist == "" {
 		t.Artist = strings.TrimSpace(f.Tags.AlbumArtist)
 	}

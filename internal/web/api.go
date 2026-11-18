@@ -55,6 +55,11 @@ type Deps struct {
 	Identify     IdentifyStatusReader
 	Upload       UploadReceiver
 	Files        FileReader
+	// IdentifyActions and IdentifyStore serve the "À identifier" routes;
+	// LocalCoversDir is where the covers of local tracks are stored.
+	IdentifyActions IdentifyActions
+	IdentifyStore   IdentifyStore
+	LocalCoversDir  string
 }
 
 type api struct {
@@ -67,12 +72,19 @@ type api struct {
 	identify IdentifyStatusReader
 	uploads  UploadReceiver
 	files    FileReader
+
+	idActions IdentifyActions
+	idStore   IdentifyStore
+	coversDir string
 }
 
 // NewAPI returns the handler serving every /api route.
 func NewAPI(d Deps) http.Handler {
 	a := &api{cat: d.Catalog, covers: d.Covers, settings: d.Settings, tools: d.Tools, lib: d.Library,
-		avail: d.Availability, identify: d.Identify, uploads: d.Upload, files: d.Files}
+		avail: d.Availability, identify: d.Identify, uploads: d.Upload, files: d.Files,
+		idActions: d.IdentifyActions, idStore: d.IdentifyStore, coversDir: d.LocalCoversDir}
+	canAct := d.IdentifyActions != nil && d.IdentifyStore != nil
+	hasCovers := d.IdentifyStore != nil && d.LocalCoversDir != ""
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/search", requires(d.Catalog != nil, a.search))
 	mux.HandleFunc("GET /api/artists/{id}", requires(d.Catalog != nil, a.artist))
@@ -89,6 +101,13 @@ func NewAPI(d Deps) http.Handler {
 	mux.HandleFunc("POST /api/library/scan", requires(d.Library != nil, a.libScan))
 	mux.HandleFunc("GET /api/library/availability", requires(d.Availability != nil, a.availability))
 	mux.HandleFunc("GET /api/identify/status", requires(d.Identify != nil, a.identifyStatus))
+	mux.HandleFunc("GET /api/identify", requires(d.IdentifyStore != nil, a.identifyList))
+	mux.HandleFunc("GET /api/identify/count", requires(d.IdentifyStore != nil, a.identifyCount))
+	mux.HandleFunc("POST /api/identify/{fileId}/choose", requires(canAct, a.identifyChoose))
+	mux.HandleFunc("POST /api/identify/{fileId}/local", requires(canAct, a.identifyLocal))
+	mux.HandleFunc("POST /api/identify/{fileId}/cover", requires(hasCovers, a.identifyCover))
+	mux.HandleFunc("DELETE /api/identify/{fileId}", requires(d.IdentifyStore != nil, a.identifyDelete))
+	mux.HandleFunc("GET /api/local-covers/{id}", requires(hasCovers, a.localCover))
 	mux.HandleFunc("POST /api/uploads", requires(d.Upload != nil, a.upload))
 	mux.HandleFunc("GET /api/files/{id}", requires(d.Files != nil, a.fileStatus))
 	mux.HandleFunc("GET /api/stream/{fileId}", requires(d.Stream != nil, func(w http.ResponseWriter, r *http.Request) {

@@ -80,9 +80,13 @@ func TestReceiveAcceptsAudio(t *testing.T) {
 	src := mediatest.Sine(t, t.TempDir(), "x.mp3", 2, map[string]string{"title": "Invented", "artist": "Nobody"})
 	raw, _ := os.ReadFile(src)
 
-	f, err := s.r.Receive(context.Background(), "Some Song.MP3", bytes.NewReader(raw))
+	f, err := s.r.Receive(context.Background(), `Mon dossier\Some Song.MP3`, bytes.NewReader(raw))
 	if err != nil {
 		t.Fatal(err)
+	}
+	// The sender's name is kept for display only, without its folders.
+	if f.UploadName != "Some Song.MP3" || strings.Contains(f.Path, "Some Song") {
+		t.Errorf("upload name %q, path %q", f.UploadName, f.Path)
 	}
 	if f.Origin != store.OriginUploaded || f.Status != store.FilePending || f.Tags.Title != "Invented" || f.DurationMs < 1500 {
 		t.Errorf("stored file: %+v", f)

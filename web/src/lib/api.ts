@@ -273,3 +273,97 @@ export function getScanStatus(signal?: AbortSignal): Promise<ScanStatus> {
 export async function startScan(): Promise<void> {
   await requestJSON<unknown>('/api/library/scan', { method: 'POST' });
 }
+
+// "À identifier".
+
+export interface IdentifyCandidate {
+  recordingId: string;
+  albumId: string;
+  title: string;
+  artist: string;
+  album: string;
+  lengthMs: number;
+  /** 0 to 100. */
+  score: number;
+  /** 'tag', 'acoustid' or 'search'. */
+  source: string;
+}
+
+export interface IdentifyTags {
+  title: string;
+  artist: string;
+  album: string;
+  albumArtist: string;
+  year: string;
+  track: number;
+  disc: number;
+}
+
+export interface IdentifyFile {
+  id: string;
+  /** File name only (the sender's name for an upload). */
+  name: string;
+  origin: 'uploaded' | 'dropped';
+  format: string;
+  durationMs: number;
+  tags: IdentifyTags;
+  candidates: IdentifyCandidate[];
+}
+
+export interface IdentifyList {
+  files: IdentifyFile[];
+  /** Files waiting for the user, in all (files holds at most 100). */
+  total: number;
+  /** Files still being identified automatically. */
+  queued: number;
+}
+
+export interface LocalTrackInput {
+  title: string;
+  artist: string;
+  album: string;
+  albumArtist: string;
+  disc: number;
+  position: number;
+  year: number;
+}
+
+export function getIdentifyList(signal?: AbortSignal): Promise<IdentifyList> {
+  return getJSON('/api/identify', signal);
+}
+
+export function getIdentifyCount(signal?: AbortSignal): Promise<{ count: number; queued: number }> {
+  return getJSON('/api/identify/count', signal);
+}
+
+function postJSON<T>(url: string, body: unknown): Promise<T> {
+  return requestJSON<T>(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+}
+
+export function chooseRecording(fileId: string, recordingId: string, albumId = ''): Promise<{ status: string; duplicate: string }> {
+  const body: { recordingId: string; albumId?: string } = { recordingId };
+  if (albumId) {
+    body.albumId = albumId;
+  }
+  return postJSON(`/api/identify/${encodeURIComponent(fileId)}/choose`, body);
+}
+
+export function createLocalTrack(fileId: string, input: LocalTrackInput): Promise<{ localTrackId: string; status: string }> {
+  return postJSON(`/api/identify/${encodeURIComponent(fileId)}/local`, input);
+}
+
+export function uploadLocalCover(fileId: string, image: Blob): Promise<{ coverUrl: string }> {
+  return requestJSON(`/api/identify/${encodeURIComponent(fileId)}/cover`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/octet-stream' },
+    body: image,
+  });
+}
+
+export async function deletePendingFile(fileId: string): Promise<void> {
+  await requestJSON<unknown>(`/api/identify/${encodeURIComponent(fileId)}`, { method: 'DELETE' });
+}

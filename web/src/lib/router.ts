@@ -7,6 +7,7 @@ export type Route =
   | { name: 'search'; query: string }
   | { name: 'settings' }
   | { name: 'upload' }
+  | { name: 'identify' }
   | { name: 'library'; tab: LibraryTab; sort: string; q: string; artist: string }
   | { name: 'libraryAlbum'; key: string }
   | { name: 'artist'; id: string }
@@ -38,6 +39,9 @@ export function parseRoute(loc: { pathname: string; search: string }): Route {
   }
   if (path === '/upload' || path === '/upload/') {
     return { name: 'upload' };
+  }
+  if (path === '/identify' || path === '/identify/') {
+    return { name: 'identify' };
   }
   if (path === '/settings' || path === '/settings/') {
     return { name: 'settings' };

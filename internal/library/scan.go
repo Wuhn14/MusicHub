@@ -55,6 +55,9 @@ type Scanner struct {
 	// OnFileAdded, when set, is called for every file added or modified that
 	// ends up pending identification.
 	OnFileAdded func(store.File)
+	// IncomingDir is the folder uploaded files wait in. The scan never walks
+	// it, so the uploaded files still there are never flagged as missing.
+	IncomingDir string
 }
 
 // NewScanner builds a scanner for musicDir.
@@ -144,7 +147,7 @@ func (s *Scanner) Scan(ctx context.Context) (Report, error) {
 		return rep, err
 	}
 	if complete {
-		n, err := s.st.MarkMissing(ctx, started, s.now())
+		n, err := s.st.MarkMissing(ctx, started, s.now(), s.IncomingDir)
 		if err != nil {
 			return rep, err
 		}

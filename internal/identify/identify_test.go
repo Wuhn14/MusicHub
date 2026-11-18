@@ -719,3 +719,86 @@ func TestEnqueueDuringRunIsKept(t *testing.T) {
 		t.Errorf("status = %+v", s)
 	}
 }
+
+// fakePlacer records the files it was asked to place.
+type fakePlacer struct {
+	mu  sync.Mutex
+	ids []string
+	err error
+}
+
+func (p *fakePlacer) Place(ctx context.Context, fileID string) (store.File, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if ctx.Err() != nil {
+		return store.File{}, ctx.Err()
+	}
+	p.ids = append(p.ids, fileID)
+	return store.File{ID: fileID}, p.err
+}
+
+func TestPlacedAfterIdentificationChoiceAndLocal(t *testing.T) {
+	e := newEnv(t)
+	pl := &fakePlacer{err: errors.New("disk full")}
+	e.deps.Placer = pl
+	e.set.s.Duplicates = settings.DuplicatesKeepBoth
+	ctx := context.Background()
+
+	// Automatic identification: placed, and a placing failure is not an
+	// identification failure.
+	auto := e.addFile(t, store.File{DurationMs: 30000, Tags: media.Tags{MBRecordingID: recGlassTide}})
+	if res := e.identify(t, auto.ID); res.Status != store.FileIdentified {
+		t.Fatalf("result = %+v", res)
+	}
+	// Left pending: not placed.
+	pending := e.addFile(t, store.File{DurationMs: 30000})
+	e.identify(t, pending.ID)
+
+	// Chosen by the user, with an explicit album.
+	chosen := e.addFile(t, store.File{DurationMs: 30000})
+	res, err := New(e.deps).Choose(ctx, chosen.ID, recGlassTide, albumLantern)
+	if err != nil || res.Status != store.FileIdentified || res.AlbumID != albumLantern || res.Source != SourceManual {
+		t.Fatalf("Choose = %+v, %v", res, err)
+	}
+	if g := e.file(t, chosen.ID); g.Disc != 2 || g.Position != 3 {
+		t.Errorf("chosen file = %+v", g)
+	}
+	if _, err := New(e.deps).Choose(ctx, chosen.ID, recGlassTide, ""); !errors.Is(err, store.ErrNotPending) {
+		t.Errorf("second Choose err = %v", err)
+	}
+	if _, err := New(e.deps).Choose(ctx, pending.ID, "00000000-0000-4000-8000-0000000000ff", ""); !errors.Is(err, musicbrainz.ErrNotFound) {
+		t.Errorf("unknown recording err = %v", err)
+	}
+
+	// Made local.
+	local := e.addFile(t, store.File{})
+	lt, f, err := New(e.deps).CreateLocal(ctx, local.ID, store.LocalTrack{Title: "T", Artist: "A"})
+	if err != nil || lt.ID == "" || f.Status != store.FileLocal || f.LocalTrackID != lt.ID {
+		t.Fatalf("CreateLocal = %+v, %+v, %v", lt, f, err)
+	}
+	if _, _, err := New(e.deps).CreateLocal(ctx, local.ID, store.LocalTrack{Title: "T", Artist: "A"}); !errors.Is(err, store.ErrNotPending) {
+		t.Errorf("second CreateLocal err = %v", err)
+	}
+
+	pl.mu.Lock()
+	defer pl.mu.Unlock()
+	want := []string{auto.ID, chosen.ID, local.ID}
+	if fmt.Sprint(pl.ids) != fmt.Sprint(want) {
+		t.Errorf("placed = %v, want %v", pl.ids, want)
+	}
+}
+
+func TestNotPlacedWhenTheNewcomerLoses(t *testing.T) {
+	mediatest.RequireTool(t, "ffmpeg")
+	e := newEnv(t)
+	pl := &fakePlacer{}
+	e.deps.Placer = pl
+	e.addAudio(t, "old.mp3", store.OriginDropped, false, 320000, true)
+	dup := e.addAudio(t, "new.mp3", store.OriginUploaded, false, 128000, false)
+	if res := e.identify(t, dup.ID); res.Duplicate != DupDiscardedNew {
+		t.Fatalf("result = %+v", res)
+	}
+	if len(pl.ids) != 0 {
+		t.Errorf("discarded file placed: %v", pl.ids)
+	}
+}

@@ -208,3 +208,48 @@ func TestPendingUploadedFilesStayOutOfTheLibrary(t *testing.T) {
 		t.Errorf("identified upload missing: %+v", tracks)
 	}
 }
+
+func TestLocalTracksUseTheirOwnFields(t *testing.T) {
+	st := openStore(t)
+	ctx := context.Background()
+	tagged := put(t, st, store.File{Path: "/m/a.mp3", Status: store.FilePending, DurationMs: 1000,
+		Tags: media.Tags{Title: "ignored", Artist: "ignored", Album: "ignored", Track: 9}})
+	lt, err := st.CreateLocalTrack(ctx, tagged.ID, store.LocalTrack{
+		Title: "Maquette", Artist: "Moi", AlbumArtist: "Mon Groupe", Album: "Démos", Year: 2022, Disc: 1, Position: 2,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A tagged file of the same album joins the group.
+	put(t, st, store.File{Path: "/m/b.mp3", Status: store.FilePending, DurationMs: 1000,
+		Tags: media.Tags{Title: "Autre", Artist: "Mon Groupe", AlbumArtist: "Mon Groupe", Album: "Démos", Track: 1}})
+
+	q := NewQuery(st)
+	albums, err := q.Albums(ctx, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(albums) != 1 || albums[0].Title != "Démos" || albums[0].Artist != "Mon Groupe" || albums[0].Year != "2022" ||
+		!albums[0].Local || albums[0].TrackCount != 2 || albums[0].CoverURL != "" {
+		t.Fatalf("albums = %+v", albums)
+	}
+	_, tracks, err := q.Album(ctx, albums[0].Key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tracks) != 2 || tracks[1].Title != "Maquette" || tracks[1].Artist != "Moi" || tracks[1].Position != 2 || !tracks[1].Local {
+		t.Fatalf("tracks = %+v", tracks)
+	}
+
+	// An uploaded cover becomes the album cover.
+	if err := st.SetLocalTrackCover(ctx, lt.ID, lt.ID+".jpg"); err != nil {
+		t.Fatal(err)
+	}
+	albums, _ = q.Albums(ctx, "")
+	if want := "/api/local-covers/" + lt.ID; albums[0].CoverURL != want {
+		t.Errorf("cover = %q, want %q", albums[0].CoverURL, want)
+	}
+	if tr, _ := q.Tracks(ctx, "", "maquette"); len(tr) != 1 || tr[0].CoverURL != "/api/local-covers/"+lt.ID {
+		t.Errorf("track search = %+v", tr)
+	}
+}

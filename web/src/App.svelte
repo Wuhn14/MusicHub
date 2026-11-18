@@ -6,6 +6,7 @@
   import Artist from './routes/Artist.svelte';
   import Settings from './routes/Settings.svelte';
   import Upload from './routes/Upload.svelte';
+  import ToIdentify from './routes/ToIdentify.svelte';
   import Library from './routes/Library.svelte';
   import LibraryAlbum from './routes/LibraryAlbum.svelte';
   import Album from './routes/Album.svelte';
@@ -22,7 +23,21 @@
     }),
   );
 
-  const active = $derived(route.name === 'home' ? 'home' : route.name === 'search' ? 'search' : route.name === 'settings' ? 'settings' : route.name === 'upload' ? 'upload' : route.name === 'library' || route.name === 'libraryAlbum' ? 'library' : null);
+  const active = $derived.by(() => {
+    switch (route.name) {
+      case 'home':
+      case 'search':
+      case 'settings':
+      case 'upload':
+      case 'identify':
+        return route.name;
+      case 'library':
+      case 'libraryAlbum':
+        return 'library';
+      default:
+        return null;
+    }
+  });
 </script>
 
 <Layout {active} pageKey={String(visit)}>
@@ -35,6 +50,8 @@
       <Settings />
     {:else if route.name === 'upload'}
       <Upload />
+    {:else if route.name === 'identify'}
+      <ToIdentify />
     {:else if route.name === 'library'}
       <Library tab={route.tab} sort={route.sort} q={route.q} artist={route.artist} />
     {:else if route.name === 'libraryAlbum'}

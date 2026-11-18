@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onDestroy } from 'svelte';
+  import { identifyCount } from '../lib/identify.svelte';
   import {
     acceptAttribute,
     extensionOf,
@@ -109,6 +110,7 @@
         it.fileId = sent.id;
         it.sentAt = Date.now();
       }
+      void identifyCount.refresh();
     } catch (err) {
       const it = find(key);
       if (it) {
@@ -161,6 +163,9 @@
           if (s.status !== 'pending') {
             item.ident = 'unidentified';
             continue;
+          }
+          if (Date.now() - item.sentAt > pollWindowMs) {
+            void identifyCount.refresh();
           }
         } catch {
           // A failed check is retried at the next tick, until the window ends.

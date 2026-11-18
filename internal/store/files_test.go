@@ -24,10 +24,10 @@ func TestFileUpsertKeepsLinksAndRestoresMissing(t *testing.T) {
 		t.Fatal(err)
 	}
 	t1 := t0.Add(time.Hour)
-	if n, err := s.MarkMissing(ctx, t1, t1); err != nil || n != 1 {
+	if n, err := s.MarkMissing(ctx, t1, t1, ""); err != nil || n != 1 {
 		t.Fatalf("MarkMissing = %d, %v", n, err)
 	}
-	if n, _ := s.MarkMissing(ctx, t1, t1); n != 0 {
+	if n, _ := s.MarkMissing(ctx, t1, t1, ""); n != 0 {
 		t.Errorf("second MarkMissing = %d, want 0", n)
 	}
 	g, _ := s.GetFile(ctx, f.ID)
@@ -55,7 +55,7 @@ func TestPurgeMissing(t *testing.T) {
 	t0 := time.Date(2026, 3, 1, 10, 0, 0, 0, time.UTC)
 	s.UpsertScannedFile(ctx, File{Path: "/m/a.mp3", LastSeen: t0})
 	s.UpsertScannedFile(ctx, File{Path: "/m/b.mp3", LastSeen: t0.Add(48 * time.Hour)})
-	s.MarkMissing(ctx, t0.Add(time.Hour), t0.Add(2*time.Hour))
+	s.MarkMissing(ctx, t0.Add(time.Hour), t0.Add(2*time.Hour), "")
 	if n, _ := s.PurgeMissing(ctx, t0); n != 0 {
 		t.Errorf("early purge = %d", n)
 	}
@@ -79,7 +79,7 @@ func TestMarkMissingSkipsPendingUploads(t *testing.T) {
 	if up.Origin != OriginUploaded || up.Status != FilePending {
 		t.Fatalf("uploaded file = %+v", up)
 	}
-	if n, err := s.MarkMissing(ctx, t0.Add(time.Hour), t0.Add(time.Hour)); err != nil || n != 0 {
+	if n, err := s.MarkMissing(ctx, t0.Add(time.Hour), t0.Add(time.Hour), ""); err != nil || n != 0 {
 		t.Fatalf("MarkMissing = %d, %v", n, err)
 	}
 	if got, _ := s.GetFile(ctx, up.ID); got.Status != FilePending {

@@ -26,8 +26,8 @@ func TestMigrationsIdempotent(t *testing.T) {
 		if err := s.db.QueryRow(`SELECT COUNT(*) FROM schema_migrations`).Scan(&n); err != nil {
 			t.Fatalf("count: %v", err)
 		}
-		if n != 5 {
-			t.Fatalf("schema_migrations rows = %d, want 5", n)
+		if n != 6 {
+			t.Fatalf("schema_migrations rows = %d, want 6", n)
 		}
 		if err := s.Close(); err != nil {
 			t.Fatalf("Close: %v", err)

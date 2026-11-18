@@ -68,12 +68,22 @@ func run() error {
 	tools := media.New(cfg.FFmpeg, cfg.FFprobe, cfg.FPcalc)
 	settingsSvc := settings.New(st)
 	scanner := library.NewScanner(st, tools, cfg.MusicDir, time.Now)
+	// Uploaded files wait in the incoming folder until they are identified;
+	// the scanner never walks it and never flags them as missing.
+	incomingDir, err := filepath.Abs(filepath.Join(cfg.DataDir, "incoming"))
+	if err != nil {
+		return fmt.Errorf("dossier d'envoi : %w", err)
+	}
+	scanner.IncomingDir = incomingDir
+	// Identified and local files are filed into the music folder.
+	organizer := library.NewOrganizer(st, tools, cfg.MusicDir, settingsSvc)
+	organizer.Recordings = mb
 
 	// Identification runs in the background from a persistent job queue;
 	// the scanner queues every new or modified pending file.
 	identifier := identify.New(identify.Deps{
 		Store: st, Tools: tools, AcoustID: acoustid.New(cfg.AcoustIDURL, 333*time.Millisecond),
-		MB: mb, Catalog: cat, Settings: settingsSvc, Now: time.Now,
+		MB: mb, Catalog: cat, Settings: settingsSvc, Placer: organizer, Now: time.Now,
 	})
 	worker := identify.NewWorker(identifier, st)
 	scanner.OnFileAdded = func(f store.File) { worker.Enqueue(f.ID) }
@@ -103,8 +113,6 @@ func run() error {
 		return s.MaxTranscodes
 	})
 
-	// Uploaded files wait in the incoming folder until they are identified.
-	incomingDir := filepath.Join(cfg.DataDir, "incoming")
 	removed, err := upload.CleanPartFiles(incomingDir)
 	if err != nil {
 		return fmt.Errorf("préparation du dossier d'envoi : %w", err)
@@ -114,10 +122,22 @@ func run() error {
 	}
 	receiver := upload.New(st, tools, incomingDir, settingsSvc, func(f store.File) { worker.Enqueue(f.ID) })
 
+	// Uploaded files identified (or made local) before a stop, but not moved
+	// yet, are filed now.
+	sweepDone := make(chan struct{})
+	go func() {
+		defer close(sweepDone)
+		if n := organizer.PlaceStranded(ctx, incomingDir); n > 0 {
+			slog.Info("fichiers envoyés rangés au démarrage", "count", n)
+		}
+	}()
+	defer func() { stop(); <-sweepDone }()
+
 	api := web.NewAPI(web.Deps{
 		Catalog: cat, Covers: covers, Settings: settingsSvc, Tools: tools,
 		Library: library.Service{Query: library.NewQuery(st), Runner: runner}, Stream: streamer,
 		Availability: st, Identify: worker, Upload: receiver, Files: st,
+		IdentifyActions: identifier, IdentifyStore: st, LocalCoversDir: filepath.Join(cfg.DataDir, "local-covers"),
 	})
 	srv := &http.Server{
 		Addr:              fmt.Sprintf(":%d", cfg.Port),
