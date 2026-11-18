@@ -120,6 +120,14 @@ type Result struct {
 type Identifier struct {
 	d          Deps
 	badKeyOnce sync.Once
+	// dupMu serializes the duplicates step: the worker and a manual choice
+	// can link two copies of the same recording at the same time, and each
+	// must see the other's outcome before deciding, or both copies could
+	// be deleted.
+	dupMu sync.Mutex
+	// afterLink, when set, runs once a file is linked and before the
+	// duplicates step (a test seam to line up concurrent links).
+	afterLink func()
 }
 
 // New returns an identifier. A nil Now defaults to time.Now.
@@ -248,7 +256,12 @@ func (id *Identifier) link(ctx context.Context, f store.File, hit musicbrainz.Re
 	// The file is linked: finish the duplicates step and the placing even if
 	// a shutdown starts now, so no half-resolved state is left behind.
 	after := context.WithoutCancel(ctx)
+	if id.afterLink != nil {
+		id.afterLink()
+	}
+	id.dupMu.Lock()
 	dup, err := resolveDuplicates(after, id.d.Store, f.ID, policy)
+	id.dupMu.Unlock()
 	if err != nil {
 		return res, true, fmt.Errorf("duplicates: %w", err)
 	}

@@ -802,3 +802,53 @@ func TestNotPlacedWhenTheNewcomerLoses(t *testing.T) {
 		t.Errorf("discarded file placed: %v", pl.ids)
 	}
 }
+
+// TestConcurrentDuplicatesKeepOneCopy links two uploaded copies of the same
+// recording at the same time: whatever the order, exactly one must survive.
+func TestConcurrentDuplicatesKeepOneCopy(t *testing.T) {
+	mediatest.RequireTool(t, "ffmpeg")
+
+	for _, policy := range []string{settings.DuplicatesKeepExisting, settings.DuplicatesBest} {
+		t.Run(policy, func(t *testing.T) {
+			for round := 0; round < 5; round++ {
+				e := newEnv(t)
+				e.set.s.Duplicates = policy
+				// Same quality: under "best" this is a tie.
+				a := e.addAudio(t, fmt.Sprintf("a%d.mp3", round), store.OriginUploaded, false, 320000, false)
+				b := e.addAudio(t, fmt.Sprintf("b%d.mp3", round), store.OriginUploaded, false, 320000, false)
+				idf := New(e.deps)
+				var linked sync.WaitGroup
+				linked.Add(2)
+				// Both files are linked before either resolves duplicates.
+				idf.afterLink = func() { linked.Done(); linked.Wait() }
+				var wg sync.WaitGroup
+				errs := make([]error, 2)
+				for i, id := range []string{a.ID, b.ID} {
+					wg.Add(1)
+					go func() {
+						defer wg.Done()
+						_, errs[i] = idf.Identify(context.Background(), id)
+					}()
+				}
+				wg.Wait()
+				for _, err := range errs {
+					if err != nil {
+						t.Fatalf("Identify: %v", err)
+					}
+				}
+				n := 0
+				for _, f := range []store.File{a, b} {
+					if exists(f.Path) {
+						n++
+						if g := e.file(t, f.ID); g.Status != store.FileIdentified {
+							t.Errorf("survivor status = %s", g.Status)
+						}
+					}
+				}
+				if n != 1 {
+					t.Fatalf("round %d: %d copies left on disk, want exactly 1", round, n)
+				}
+			}
+		})
+	}
+}
