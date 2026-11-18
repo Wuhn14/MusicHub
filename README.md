@@ -1,17 +1,17 @@
 # 🎵 MusicHub
 
-> **Status: early concept / work in progress.** "MusicHub" is a provisional name.
+> **Status: work in progress, step 1 of 5 done** (catalogue foundation). "MusicHub" is a provisional name.
 >
 > 🇫🇷 [Lire en français](README.fr.md)
 
 **MusicHub** is a self-hosted, open-source music platform: your own "home Spotify", running on your NAS or home server.
 
-It aims to bring together, in a single app, what today requires several separate tools:
+It aims to bring together, in a single self-contained app, what today requires several separate tools:
 
-- a **music streaming server** (in the spirit of [Navidrome](https://github.com/navidrome/navidrome)),
-- a **library manager** that tracks artists and albums, finds missing releases and keeps everything organized (in the spirit of [Lidarr](https://github.com/Lidarr/Lidarr) / [Sonarr](https://github.com/Sonarr/Sonarr)),
-- **indexer integration** (in the spirit of [Prowlarr](https://github.com/Prowlarr/Prowlarr)),
-- a **built-in web player**, plus compatibility with existing mobile clients such as [Symfonium](https://symfonium.app/) through the Subsonic/OpenSubsonic API.
+- a **catalogue** of all the music in the world (artists, albums, tracks, covers),
+- a **music library and web player**, with a Spotify-like interface,
+- a **built-in download engine**: ask for a track that is not on your server and MusicHub fetches it from the sources you configure, with no other software to install alongside,
+- a **Subsonic/OpenSubsonic API**, so existing mobile clients such as [Symfonium](https://symfonium.app/) keep working.
 
 ## Current state (step 1)
 
@@ -20,7 +20,7 @@ The first step is the **catalogue foundation**, written in Go with an embedded S
 - search the whole [MusicBrainz](https://musicbrainz.org/) catalogue (artists, albums, tracks),
 - artist pages with their discography, and album pages with the track list and durations,
 - covers from the [Cover Art Archive](https://coverartarchive.org/), cached on disk,
-- a local SQLite cache of catalogue data, so the app keeps working when MusicBrainz is slow or unreachable.
+- a local SQLite cache of catalogue data: pages you have already visited stay available when MusicBrainz is slow or unreachable (searching still needs MusicBrainz).
 
 Playback and downloads come in later steps (see the roadmap). The interface is currently in French only.
 
@@ -60,7 +60,7 @@ docker compose up -d --build
 # http://localhost:8090
 ```
 
-The internal database and cover cache live in the named volume `musichub-data`; your music folder is mounted from `./music`. The container runs as a non-root user. `GET /healthz` returns HTTP 200 with `{"ok":true}` when the server is up, which you can use for monitoring.
+The internal database and cover cache live in the named volume `musichub-data`; your music folder is mounted from `./music`. The container runs as a non-root user (UID/GID 65532). If you replace the named volume with a bind mount for `/data` (common on a NAS), run `chown 65532:65532` on that folder first, or set `user:` in the compose file. `GET /healthz` returns HTTP 200 with `{"ok":true}` when the server is up, which you can use for monitoring.
 
 MusicHub has **no authentication yet**: run it on a trusted network or behind a reverse proxy that handles access control.
 
@@ -93,25 +93,24 @@ Self-hosting music today usually means installing, configuring and wiring togeth
 
 ## Planned features
 
-- [ ] Music library scanning (tags, covers, folder structure)
-- [ ] Subsonic / OpenSubsonic API → works with Symfonium, DSub, Substreamer, Feishin…
-- [ ] Built-in web player (playlists, queue, search, "radio" mode)
-- [ ] Artist / album monitoring and missing-release detection
-- [ ] Indexer and download-client integration
-- [ ] Automatic metadata enrichment (MusicBrainz, cover art)
-- [ ] Multi-user support
-- [ ] Docker image designed for NAS (Synology, Unraid, TrueNAS…)
+- [x] Catalogue: MusicBrainz search, artist and album pages, covers
+- [ ] Library scan of your music folder and in-browser playback with a queue
+- [ ] Accounts: administrator and users, with their own playlists and favourites
+- [ ] Built-in download engine, with sources **you** configure: MusicHub ships with no source, and starts playing while the download is still running
+- [ ] Subsonic / OpenSubsonic API → works with Symfonium, Substreamer, DSub…
+- [ ] Later: importing a Spotify library, direct (non-torrent) sources, English interface
 
 ## Roadmap
 
-| Phase | Goal |
-|------|------|
-| **0 — Design** | Define the architecture, tech stack and scope (this README) |
-| **1 — Streaming core** | Library scan + Subsonic API → usable with Symfonium |
-| **2 — Web player** | Native web interface for listening and browsing |
-| **3 — Library management** | Artist monitoring, missing albums, metadata |
-| **4 — Integrations** | Indexers, download clients, notifications |
-| **5 — Packaging** | Docker image, NAS documentation, first release |
+Each step ends with something usable and tested (see the [design document](docs/conception/v1.md), in French).
+
+| Step | Goal | Status |
+|------|------|--------|
+| **1 — Foundation and catalogue** | Go project, database, web interface; MusicBrainz search, artist and album pages with covers | ✅ Done |
+| **2 — Library and playback** | Scan the music folder, play in the browser with a player and a queue | Next |
+| **3 — Accounts** | Sign-in, roles, per-account playlists and favourites, basic security | Planned |
+| **4 — Torrent retrieval** | User-configured sources, release choice, download engine, play while downloading, no duplicate downloads | Planned |
+| **5 — Subsonic API** | Mobile clients can sync and play, including tracks not yet downloaded | Planned |
 
 ## Legal notice
 
@@ -119,7 +118,7 @@ MusicHub is a tool for managing and streaming **your own music collection**. It 
 
 ## Contributing
 
-The project is just getting started — ideas, feedback and discussions are very welcome! See [CONTRIBUTING.md](CONTRIBUTING.md).
+The project is in its early steps: ideas, feedback and discussions are very welcome! See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
