@@ -87,7 +87,10 @@ func (a *api) getSettings(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *api) putSettings(w http.ResponseWriter, r *http.Request) {
-	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxSettingsBody))
+	if !requireJSON(w, r) {
+		return
+	}
+	dec :=json.NewDecoder(http.MaxBytesReader(w, r.Body, maxSettingsBody))
 	dec.DisallowUnknownFields()
 	var in settingsPatchJSON
 	if err := dec.Decode(&in); err != nil {

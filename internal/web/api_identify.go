@@ -173,8 +173,12 @@ func (a *api) identifyCount(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]int{"count": awaiting, "queued": queued})
 }
 
-// decodeBody reads exactly one JSON object with known fields into v.
+// decodeBody reads exactly one JSON object with known fields into v. The
+// body must be declared as JSON.
 func decodeBody(w http.ResponseWriter, r *http.Request, v any) bool {
+	if !requireJSON(w, r) {
+		return false
+	}
 	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxIdentifyBody))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(v); err != nil {

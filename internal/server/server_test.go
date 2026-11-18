@@ -51,3 +51,45 @@ func TestSecurityHeadersOnEveryResponse(t *testing.T) {
 		}
 	}
 }
+
+func TestRefusesCrossSiteWrites(t *testing.T) {
+	reached := 0
+	api := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { reached++ })
+	h := New(api, http.NotFoundHandler())
+	for _, tc := range []struct {
+		method, site string
+		want         int
+	}{
+		{"POST", "cross-site", http.StatusForbidden},
+		{"PUT", "cross-site", http.StatusForbidden},
+		{"DELETE", "cross-site", http.StatusForbidden},
+		{"GET", "cross-site", http.StatusOK}, // reads stay open (covers, streams)
+		{"HEAD", "cross-site", http.StatusOK},
+		{"POST", "same-origin", http.StatusOK},
+		{"POST", "same-site", http.StatusOK},
+		{"POST", "none", http.StatusOK},
+		{"POST", "", http.StatusOK}, // tools that send no such header
+	} {
+		reached = 0
+		req := httptest.NewRequest(tc.method, "/api/settings", nil)
+		if tc.site != "" {
+			req.Header.Set("Sec-Fetch-Site", tc.site)
+		}
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != tc.want {
+			t.Errorf("%s with %q: status %d, want %d", tc.method, tc.site, rec.Code, tc.want)
+		}
+		if tc.want == http.StatusForbidden {
+			if reached != 0 {
+				t.Errorf("%s with %q reached the API", tc.method, tc.site)
+			}
+			if got := rec.Body.String(); got != "{\"error\":\"Requête refusée.\"}\n" {
+				t.Errorf("body = %q", got)
+			}
+			if got := rec.Header().Get("Content-Type"); got != "application/json; charset=utf-8" {
+				t.Errorf("Content-Type = %q", got)
+			}
+		}
+	}
+}

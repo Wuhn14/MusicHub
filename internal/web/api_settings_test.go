@@ -31,6 +31,9 @@ func newSettingsAPI(t *testing.T) http.Handler {
 func send(t *testing.T, h http.Handler, method, target, body string) *httptest.ResponseRecorder {
 	t.Helper()
 	req := httptest.NewRequest(method, target, strings.NewReader(body))
+	if body != "" {
+		req.Header.Set("Content-Type", "application/json")
+	}
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	return rec
@@ -125,5 +128,27 @@ func TestNilDepIs503(t *testing.T) {
 		{"GET", "/api/albums/" + albumID}, {"GET", "/api/covers/" + albumID},
 	} {
 		wantError(t, send(t, h, r[0], r[1], "{}"), 503, "Fonction indisponible.")
+	}
+}
+
+func TestJSONEndpointsRequireJSONContentType(t *testing.T) {
+	h := newSettingsAPI(t)
+	for _, ct := range []string{"", "text/plain", "application/x-www-form-urlencoded", "multipart/form-data; boundary=x"} {
+		req := httptest.NewRequest("PUT", "/api/settings", strings.NewReader(`{"scanIntervalMinutes":30}`))
+		if ct != "" {
+			req.Header.Set("Content-Type", ct)
+		}
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != http.StatusUnsupportedMediaType {
+			t.Errorf("Content-Type %q: status %d, want 415", ct, rec.Code)
+		}
+	}
+	req := httptest.NewRequest("PUT", "/api/settings", strings.NewReader(`{"scanIntervalMinutes":30}`))
+	req.Header.Set("Content-Type", "application/json; charset=utf-8")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Errorf("JSON with charset: status %d (%s)", rec.Code, rec.Body)
 	}
 }

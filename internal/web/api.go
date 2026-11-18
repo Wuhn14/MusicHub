@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io/fs"
 	"log/slog"
+	"mime"
 	"net/http"
 	"os"
 	"regexp"
@@ -331,6 +332,18 @@ func fail(w http.ResponseWriter, r *http.Request, err error) {
 		}
 		writeError(w, http.StatusInternalServerError, "Erreur interne.")
 	}
+}
+
+// requireJSON answers 415 unless the request body is declared as JSON. A
+// cross-site form cannot send that type without a preflight the browser
+// would refuse.
+func requireJSON(w http.ResponseWriter, r *http.Request) bool {
+	mt, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if err != nil || mt != "application/json" {
+		writeError(w, http.StatusUnsupportedMediaType, "Le corps de la requête doit être du JSON.")
+		return false
+	}
+	return true
 }
 
 func writeError(w http.ResponseWriter, status int, msg string) {
