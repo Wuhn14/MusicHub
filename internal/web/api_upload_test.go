@@ -9,7 +9,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/Wuhn14/MusicHub/internal/identify"
 	"github.com/Wuhn14/MusicHub/internal/store"
 	"github.com/Wuhn14/MusicHub/internal/upload"
 )
@@ -113,10 +115,21 @@ func TestAPIFileStatus(t *testing.T) {
 	}
 	h := NewAPI(Deps{Files: st})
 	m := decode(t, send(t, h, "GET", "/api/files/"+f.ID, ""))
-	if m["status"] != "pending" || m["id"] != f.ID {
+	// No identification job: the file waits for the user.
+	if m["status"] != "pending" || m["id"] != f.ID || m["awaiting"] != true {
 		t.Errorf("status body: %v", m)
 	}
-	if rec := send(t, h, "GET", "/api/files/nope", ""); rec.Code != 404 {
+	if _, err := st.EnqueueJob(context.Background(), identify.JobKind, f.ID, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if m := decode(t, send(t, h, "GET", "/api/files/"+f.ID, "")); m["awaiting"] != false {
+		t.Errorf("queued file: %v", m)
+	}
+	// A deleted file (a discarded duplicate) answers 404.
+	if rec := send(t, h, "GET", "/api/files/"+strings.Repeat("0", 32), ""); rec.Code != 404 {
 		t.Errorf("unknown: %d", rec.Code)
+	}
+	if rec := send(t, h, "GET", "/api/files/nope", ""); rec.Code != 400 {
+		t.Errorf("malformed id: %d", rec.Code)
 	}
 }

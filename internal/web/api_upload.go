@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/Wuhn14/MusicHub/internal/identify"
 	"github.com/Wuhn14/MusicHub/internal/store"
 	"github.com/Wuhn14/MusicHub/internal/upload"
 )
@@ -26,6 +27,7 @@ type FileReader interface {
 	GetFile(ctx context.Context, id string) (store.File, error)
 	GetAlbum(ctx context.Context, id string) (store.Album, error)
 	GetLocalTrack(ctx context.Context, id string) (store.LocalTrack, error)
+	IsAwaiting(ctx context.Context, id, jobKind string) (bool, error)
 }
 
 type uploadedFileJSON struct {
@@ -108,17 +110,32 @@ type fileStatusJSON struct {
 	Title  string `json:"title"`
 	Artist string `json:"artist"`
 	Album  string `json:"album"`
+	// Awaiting is true for a pending file that no identification job works
+	// on any more: it waits for the user.
+	Awaiting bool `json:"awaiting"`
 }
 
 // fileStatus answers GET /api/files/{id}: the status of a file and, once it
-// is identified, what it was identified as.
+// is identified, what it was identified as. An uploaded file the duplicates
+// rule deleted answers 404.
 func (a *api) fileStatus(w http.ResponseWriter, r *http.Request) {
-	f, err := a.files.GetFile(r.Context(), r.PathValue("id"))
+	id := r.PathValue("id")
+	if !fileIDPattern.MatchString(id) {
+		writeError(w, http.StatusBadRequest, msgBadID)
+		return
+	}
+	f, err := a.files.GetFile(r.Context(), id)
 	if err != nil {
 		fail(w, r, err)
 		return
 	}
 	out := fileStatusJSON{ID: f.ID, Status: f.Status}
+	if f.Status == store.FilePending {
+		if out.Awaiting, err = a.files.IsAwaiting(r.Context(), f.ID, identify.JobKind); err != nil {
+			fail(w, r, err)
+			return
+		}
+	}
 	if f.Status == store.FileIdentified || f.Status == store.FileLocal {
 		out.Title, out.Artist, out.Album = f.Tags.Title, f.Tags.Artist, f.Tags.Album
 		if f.Status == store.FileLocal {

@@ -96,10 +96,19 @@ export interface FileStatus {
   title: string;
   artist: string;
   album: string;
+  /** Pending and no identification job left: the file waits for the user. */
+  awaiting: boolean;
 }
 
-export async function getFileStatus(id: string): Promise<FileStatus> {
+/**
+ * The status of an uploaded file, or null when the file no longer exists:
+ * the duplicates rule deleted it as a lower-quality copy.
+ */
+export async function getFileStatus(id: string): Promise<FileStatus | null> {
   const res = await fetch(`/api/files/${encodeURIComponent(id)}`, { headers: { Accept: 'application/json' } });
+  if (res.status === 404) {
+    return null;
+  }
   if (!res.ok) {
     throw new Error(`status ${res.status}`);
   }

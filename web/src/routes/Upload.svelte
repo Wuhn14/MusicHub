@@ -15,7 +15,7 @@
   } from '../lib/upload';
 
   type State = 'queued' | 'uploading' | 'sent' | 'refused' | 'cancelled';
-  type Ident = 'checking' | 'identified' | 'unidentified';
+  type Ident = 'checking' | 'identified' | 'unidentified' | 'deleted' | 'hidden';
 
   interface Item {
     key: number;
@@ -111,6 +111,7 @@
         it.sentAt = Date.now();
       }
       void identifyCount.refresh();
+      void poll();
     } catch (err) {
       const it = find(key);
       if (it) {
@@ -155,13 +156,24 @@
         }
         try {
           const s = await getFileStatus(item.fileId);
+          if (s === null) {
+            // An accepted upload that no longer exists was a lower-quality duplicate.
+            item.ident = 'deleted';
+            continue;
+          }
           if (s.status === 'identified' || s.status === 'local') {
             item.ident = 'identified';
             item.identified = [s.title, s.artist].filter(Boolean).join(' — ');
             continue;
           }
-          if (s.status !== 'pending') {
+          if (s.status === 'hidden') {
+            item.ident = 'hidden';
+            continue;
+          }
+          if (s.status !== 'pending' || s.awaiting) {
+            // Automatic identification is over: the file waits for the user.
             item.ident = 'unidentified';
+            void identifyCount.refresh();
             continue;
           }
           if (Date.now() - item.sentAt > pollWindowMs) {
@@ -277,6 +289,10 @@
               <p class="state done">Identifié : {item.identified}</p>
             {:else if item.ident === 'unidentified'}
               <p class="state"><a href="/identify">À identifier</a></p>
+            {:else if item.ident === 'deleted'}
+              <p class="state">Doublon de moins bonne qualité : supprimé</p>
+            {:else if item.ident === 'hidden'}
+              <p class="state">Doublon de moins bonne qualité : masqué</p>
             {:else}
               <p class="state">Envoyé — identification en cours</p>
             {/if}

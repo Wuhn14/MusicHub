@@ -166,4 +166,12 @@ func TestAwaitingFiles(t *testing.T) {
 	if err != nil || len(list) != 1 || list[0].ID != a.ID {
 		t.Fatalf("ListAwaiting = %+v, %v", list, err)
 	}
+	for _, tc := range []struct {
+		id   string
+		want bool
+	}{{a.ID, true}, {b.ID, false}, {c.ID, false}, {"nope", false}} {
+		if got, err := s.IsAwaiting(ctx, tc.id, "identify"); err != nil || got != tc.want {
+			t.Errorf("IsAwaiting(%s) = %v, %v; want %v", tc.id, got, err, tc.want)
+		}
+	}
 }

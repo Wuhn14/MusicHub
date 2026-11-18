@@ -625,6 +625,14 @@ WHERE f.status = 'pending'`, jobKind).Scan(&awaiting, &queued)
 	return awaiting, queued, err
 }
 
+// IsAwaiting reports whether the file is pending with no identification job
+// of the given kind: it waits for the user. An unknown file is not awaiting.
+func (s *Store) IsAwaiting(ctx context.Context, id, jobKind string) (bool, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM files f WHERE f.id = ? AND `+awaitingWhere, id, jobKind).Scan(&n)
+	return n > 0, err
+}
+
 // ListAwaiting returns up to limit pending files that wait for the user (no
 // job of the given kind), oldest first.
 func (s *Store) ListAwaiting(ctx context.Context, jobKind string, limit int) ([]File, error) {
