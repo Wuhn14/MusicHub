@@ -4,12 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Wuhn14/MusicHub/internal/catalog"
 	"github.com/Wuhn14/MusicHub/internal/catalog/musicbrainz"
@@ -290,7 +292,7 @@ func TestCoverServesImageWithCacheHeader(t *testing.T) {
 	if ct := rec.Header().Get("Content-Type"); ct != "image/jpeg" {
 		t.Fatalf("Content-Type = %q", ct)
 	}
-	if cc := rec.Header().Get("Cache-Control"); cc != "public, max-age=604800" {
+	if cc := rec.Header().Get("Cache-Control"); cc != "private, max-age=604800" {
 		t.Fatalf("Cache-Control = %q", cc)
 	}
 	if rec.Body.String() != string(data) {
@@ -307,4 +309,32 @@ func TestMissingCoverIs404(t *testing.T) {
 		return "", catalog.ErrNoCover
 	}})
 	wantError(t, do(t, h, "GET", "/api/covers/"+albumID), 404, "Introuvable.")
+}
+
+func TestCoverUnavailableMapsTo502(t *testing.T) {
+	h := NewAPI(fakeCatalog{}, fakeCovers{get: func(context.Context, string, int) (string, error) {
+		return "", fmt.Errorf("%w: unexpected status 503", catalog.ErrCoverUnavailable)
+	}})
+	wantError(t, do(t, h, "GET", "/api/covers/"+albumID), 502, "Les pochettes sont momentanément indisponibles.")
+}
+
+func TestCoverFileVanishedIs404(t *testing.T) {
+	h := NewAPI(fakeCatalog{}, fakeCovers{get: func(context.Context, string, int) (string, error) {
+		return filepath.Join(t.TempDir(), "gone.jpg"), nil
+	}})
+	wantError(t, do(t, h, "GET", "/api/covers/"+albumID), 404, "Introuvable.")
+}
+
+func TestCatalogDeadlineMapsTo502(t *testing.T) {
+	var deadline time.Time
+	cat := fakeCatalog{album: func(ctx context.Context, _ string) (store.Album, error) {
+		deadline, _ = ctx.Deadline()
+		return store.Album{}, fmt.Errorf("waiting for MusicBrainz: %w", context.DeadlineExceeded)
+	}}
+	start := time.Now()
+	rec := do(t, NewAPI(cat, fakeCovers{}), "GET", "/api/albums/"+albumID)
+	wantError(t, rec, 502, "MusicBrainz est momentanément indisponible, réessaie dans un instant.")
+	if got := deadline.Sub(start); got < 50*time.Second || got > 61*time.Second {
+		t.Errorf("catalog call deadline = %v from now, want about 60s", got)
+	}
 }

@@ -5,11 +5,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"os"
 	"regexp"
 	"strconv"
+	"time"
 	"unicode/utf8"
 
 	"github.com/Wuhn14/MusicHub/internal/catalog"
@@ -19,6 +21,11 @@ import (
 
 // maxQueryRunes is the longest accepted search query.
 const maxQueryRunes = 200
+
+// catalogTimeout bounds one catalog call. MusicBrainz is rate limited to one
+// request per second, so a heavy page can legitimately take a while, but it
+// must not hold a connection forever.
+const catalogTimeout = 60 * time.Second
 
 var mbidPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 
@@ -131,7 +138,9 @@ func (a *api) search(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "Recherche trop longue.")
 		return
 	}
-	res, err := a.cat.Search(r.Context(), q)
+	ctx, cancel := context.WithTimeout(r.Context(), catalogTimeout)
+	defer cancel()
+	res, err := a.cat.Search(ctx, q)
 	if err != nil {
 		fail(w, r, err)
 		return
@@ -163,7 +172,9 @@ func (a *api) artist(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "Identifiant invalide.")
 		return
 	}
-	artist, albums, err := a.cat.Artist(r.Context(), id)
+	ctx, cancel := context.WithTimeout(r.Context(), catalogTimeout)
+	defer cancel()
+	artist, albums, err := a.cat.Artist(ctx, id)
 	if err != nil {
 		fail(w, r, err)
 		return
@@ -180,7 +191,9 @@ func (a *api) album(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "Identifiant invalide.")
 		return
 	}
-	album, err := a.cat.Album(r.Context(), id)
+	ctx, cancel := context.WithTimeout(r.Context(), catalogTimeout)
+	defer cancel()
+	album, err := a.cat.Album(ctx, id)
 	if err != nil {
 		fail(w, r, err)
 		return
@@ -209,6 +222,11 @@ func (a *api) cover(w http.ResponseWriter, r *http.Request) {
 	}
 	f, err := os.Open(path)
 	if err != nil {
+		// The cached file vanished between the lookup and the open.
+		if errors.Is(err, fs.ErrNotExist) {
+			writeError(w, http.StatusNotFound, "Introuvable.")
+			return
+		}
 		fail(w, r, err)
 		return
 	}
@@ -219,7 +237,7 @@ func (a *api) cover(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "image/jpeg")
-	w.Header().Set("Cache-Control", "public, max-age=604800")
+	w.Header().Set("Cache-Control", "private, max-age=604800")
 	http.ServeContent(w, r, "", info.ModTime(), f)
 }
 
@@ -229,7 +247,10 @@ func fail(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, store.ErrNotFound), errors.Is(err, musicbrainz.ErrNotFound), errors.Is(err, catalog.ErrNoCover):
 		writeError(w, http.StatusNotFound, "Introuvable.")
-	case errors.Is(err, musicbrainz.ErrUnavailable):
+	case errors.Is(err, catalog.ErrCoverUnavailable):
+		slog.Warn("cover art unavailable", "path", r.URL.Path, "err", err)
+		writeError(w, http.StatusBadGateway, "Les pochettes sont momentanément indisponibles.")
+	case errors.Is(err, musicbrainz.ErrUnavailable), errors.Is(err, context.DeadlineExceeded):
 		writeError(w, http.StatusBadGateway, "MusicBrainz est momentanément indisponible, réessaie dans un instant.")
 	default:
 		if r.Context().Err() == nil {

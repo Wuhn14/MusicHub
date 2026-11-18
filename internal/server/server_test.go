@@ -33,3 +33,21 @@ func TestRoutesApiAndUI(t *testing.T) {
 		}
 	}
 }
+
+func TestSecurityHeadersOnEveryResponse(t *testing.T) {
+	h := New(http.NotFoundHandler(), http.NotFoundHandler())
+	want := map[string]string{
+		"X-Content-Type-Options":  "nosniff",
+		"Referrer-Policy":         "no-referrer",
+		"Content-Security-Policy": "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'",
+	}
+	for _, path := range []string{"/healthz", "/api/x", "/artist/123"} {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest("GET", path, nil))
+		for name, value := range want {
+			if got := rec.Header().Get(name); got != value {
+				t.Errorf("%s: %s = %q, want %q", path, name, got, value)
+			}
+		}
+	}
+}

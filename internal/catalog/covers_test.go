@@ -205,11 +205,21 @@ func TestTransientErrorWritesNoMarker(t *testing.T) {
 	dir := t.TempDir()
 	c := NewCovers(caa.URL, dir, time.Now)
 	_, err := c.Get(context.Background(), coverID, 250)
-	if err == nil || errors.Is(err, ErrNoCover) {
-		t.Fatalf("err = %v, want a transient error", err)
+	if !errors.Is(err, ErrCoverUnavailable) || errors.Is(err, ErrNoCover) {
+		t.Fatalf("err = %v, want ErrCoverUnavailable", err)
 	}
 	if entries, _ := os.ReadDir(dir); len(entries) != 0 {
 		t.Errorf("dir has %d entries, want 0", len(entries))
+	}
+}
+
+func TestUnreachableArchiveIsCoverUnavailable(t *testing.T) {
+	caa := newFakeCAA(t)
+	url := caa.URL
+	caa.Close()
+	c := NewCovers(url, t.TempDir(), time.Now)
+	if _, err := c.Get(context.Background(), coverID, 250); !errors.Is(err, ErrCoverUnavailable) {
+		t.Fatalf("err = %v, want ErrCoverUnavailable", err)
 	}
 }
 

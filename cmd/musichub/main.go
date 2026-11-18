@@ -5,7 +5,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -27,7 +28,8 @@ var version = "dev"
 
 func main() {
 	if err := run(); err != nil {
-		log.Fatal(err)
+		slog.Error("MusicHub s'arrête", "err", err)
+		os.Exit(1)
 	}
 }
 
@@ -51,19 +53,22 @@ func run() error {
 	cat := catalog.New(st, mb, time.Now)
 	covers := catalog.NewCovers(cfg.CoverArtURL, filepath.Join(cfg.DataDir, "covers"), time.Now)
 
+	// SIGTERM is what `docker stop` sends. Request contexts derive from ctx,
+	// so in-flight MusicBrainz waits stop as soon as the signal arrives.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
 	srv := &http.Server{
 		Addr:              fmt.Sprintf(":%d", cfg.Port),
 		Handler:           server.New(web.NewAPI(cat, covers), web.NewUI()),
 		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       120 * time.Second,
+		BaseContext:       func(net.Listener) context.Context { return ctx },
 	}
-
-	// SIGTERM is what `docker stop` sends.
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 
 	errCh := make(chan error, 1)
 	go func() { errCh <- srv.ListenAndServe() }()
-	log.Printf("MusicHub à l'écoute sur %s", srv.Addr)
+	slog.Info("MusicHub à l'écoute", "addr", srv.Addr)
 
 	select {
 	case err := <-errCh:

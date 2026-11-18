@@ -26,6 +26,10 @@ const (
 // ErrNoCover means Cover Art Archive has no front cover for the album.
 var ErrNoCover = errors.New("no cover available")
 
+// ErrCoverUnavailable means Cover Art Archive could not be reached or
+// answered something unusable, as opposed to saying there is no cover.
+var ErrCoverUnavailable = errors.New("cover art archive unavailable")
+
 var mbidPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 
 // Covers is an on-disk cache of album covers fetched from Cover Art Archive.
@@ -122,7 +126,7 @@ func (c *Covers) fetch(ctx context.Context, albumID string, size int, file, mark
 	req.Header.Set("User-Agent", coverUserAgent)
 	resp, err := c.client.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("fetching cover: %w", err)
+		return "", fmt.Errorf("%w: %v", ErrCoverUnavailable, err)
 	}
 	defer resp.Body.Close()
 
@@ -133,7 +137,7 @@ func (c *Covers) fetch(ctx context.Context, albumID string, size int, file, mark
 		return "", ErrNoCover
 	}
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("fetching cover: unexpected status %s", resp.Status)
+		return "", fmt.Errorf("%w: unexpected status %s", ErrCoverUnavailable, resp.Status)
 	}
 	if ct := resp.Header.Get("Content-Type"); !strings.HasPrefix(ct, "image/") {
 		return "", fmt.Errorf("fetching cover: unexpected content type %q", ct)
