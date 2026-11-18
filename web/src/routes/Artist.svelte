@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { errorMessage, getArtist, isAbort, type AlbumSummary, type ArtistPage } from '../lib/api';
+  import { errorMessage, getArtist, isAbort, type ArtistPage } from '../lib/api';
+  import { groupDiscography } from '../lib/discography';
   import { countryName } from '../lib/format';
   import AlbumGrid from '../components/AlbumGrid.svelte';
   import Status from '../components/Status.svelte';
@@ -34,39 +35,21 @@
     return () => controller.abort();
   });
 
-  const groupOrder = [
-    { type: 'Album', label: 'Albums' },
-    { type: 'EP', label: 'EP' },
-    { type: 'Single', label: 'Singles' },
-    { type: '', label: 'Autres' },
-  ];
+  const groups = $derived(groupDiscography(page?.albums ?? []));
 
-  // Newest first; albums without a release date go last.
-  function byDateDesc(a: AlbumSummary, b: AlbumSummary): number {
-    if (!a.firstReleaseDate || !b.firstReleaseDate) {
-      return a.firstReleaseDate ? -1 : b.firstReleaseDate ? 1 : 0;
+  const subtitle = $derived.by(() => {
+    if (!page) {
+      return '';
     }
-    return b.firstReleaseDate.localeCompare(a.firstReleaseDate);
-  }
-
-  const groups = $derived.by(() => {
-    const albums = page?.albums ?? [];
-    const known = new Set(['Album', 'EP', 'Single']);
-    return groupOrder
-      .map(({ type, label }) => ({
-        label,
-        albums: albums
-          .filter((a) => (type ? a.primaryType === type : !known.has(a.primaryType)))
-          .sort(byDateDesc),
-      }))
-      .filter((g) => g.albums.length > 0);
+    const count = page.albums.length;
+    return [
+      page.artist.disambiguation,
+      countryName(page.artist.country),
+      `${count} ${count > 1 ? 'parutions' : 'parution'}`,
+    ]
+      .filter(Boolean)
+      .join(' · ');
   });
-
-  const subtitle = $derived(
-    page
-      ? [page.artist.disambiguation, countryName(page.artist.country)].filter(Boolean).join(' · ')
-      : '',
-  );
 
   function initial(name: string): string {
     return name.trim().charAt(0).toUpperCase() || '?';
@@ -83,10 +66,7 @@
     <div class="info">
       <p class="kind">Artiste</p>
       <h1>{page.artist.name}</h1>
-      <p class="sub">
-        {#if subtitle}{subtitle} · {/if}{page.albums.length}
-        {page.albums.length > 1 ? 'parutions' : 'parution'}
-      </p>
+      <p class="sub">{subtitle}</p>
     </div>
   </header>
 

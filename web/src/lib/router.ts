@@ -87,6 +87,10 @@ function onClick(event: MouseEvent): void {
   if (url.origin !== location.origin || url.pathname.startsWith('/api/')) {
     return;
   }
+  // In-page anchors (such as the skip link) are left to the browser.
+  if (url.hash && url.pathname + url.search === location.pathname + location.search) {
+    return;
+  }
   event.preventDefault();
   if (url.pathname + url.search !== location.pathname + location.search) {
     navigate(url.pathname + url.search + url.hash);
