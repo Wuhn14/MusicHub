@@ -31,6 +31,9 @@ type fakeCAA struct {
 	agents    []string
 	status    int // when non-zero, every redirect request answers it
 	delay     time.Duration
+	gate      chan struct{} // when set, redirects block until it is closed
+	imgType   string        // Content-Type of the image, default image/jpeg
+	imgSize   int           // when set, the image body has this many bytes
 }
 
 func newFakeCAA(t *testing.T) *fakeCAA {
@@ -44,6 +47,9 @@ func newFakeCAA(t *testing.T) *fakeCAA {
 		status := f.status
 		f.mu.Unlock()
 		time.Sleep(f.delay)
+		if f.gate != nil {
+			<-f.gate
+		}
 		if status != 0 {
 			http.Error(w, "boom", status)
 			return
@@ -56,7 +62,15 @@ func newFakeCAA(t *testing.T) *fakeCAA {
 	})
 	mux.HandleFunc("/image/", func(w http.ResponseWriter, r *http.Request) {
 		f.images.Add(1)
-		w.Header().Set("Content-Type", "image/jpeg")
+		ct := f.imgType
+		if ct == "" {
+			ct = "image/jpeg"
+		}
+		w.Header().Set("Content-Type", ct)
+		if f.imgSize > 0 {
+			_, _ = w.Write(make([]byte, f.imgSize))
+			return
+		}
 		_, _ = w.Write([]byte(fakeImage))
 	})
 	f.Server = httptest.NewServer(mux)
@@ -193,6 +207,75 @@ func TestTransientErrorWritesNoMarker(t *testing.T) {
 	_, err := c.Get(context.Background(), coverID, 250)
 	if err == nil || errors.Is(err, ErrNoCover) {
 		t.Fatalf("err = %v, want a transient error", err)
+	}
+	if entries, _ := os.ReadDir(dir); len(entries) != 0 {
+		t.Errorf("dir has %d entries, want 0", len(entries))
+	}
+}
+
+func TestLeaderCancelDoesNotFailWaiters(t *testing.T) {
+	caa := newFakeCAA(t)
+	caa.gate = make(chan struct{})
+	c := NewCovers(caa.URL, t.TempDir(), time.Now)
+
+	leaderCtx, cancel := context.WithCancel(context.Background())
+	leaderErr := make(chan error, 1)
+	go func() {
+		_, err := c.Get(leaderCtx, coverID, 250)
+		leaderErr <- err
+	}()
+	for caa.redirects.Load() == 0 { // the leader's request reached CAA
+		time.Sleep(time.Millisecond)
+	}
+	type res struct {
+		path string
+		err  error
+	}
+	waiter := make(chan res, 1)
+	go func() {
+		p, err := c.Get(context.Background(), coverID, 250)
+		waiter <- res{p, err}
+	}()
+	time.Sleep(20 * time.Millisecond) // let the waiter join the flight
+	cancel()
+	if err := <-leaderErr; !errors.Is(err, context.Canceled) {
+		t.Fatalf("leader err = %v, want context.Canceled", err)
+	}
+	close(caa.gate)
+	r := <-waiter
+	if r.err != nil {
+		t.Fatalf("waiter err = %v", r.err)
+	}
+	if b, err := os.ReadFile(r.path); err != nil || string(b) != fakeImage {
+		t.Errorf("file = %q, %v", b, err)
+	}
+	if n := caa.images.Load(); n != 1 {
+		t.Errorf("image downloads = %d, want 1", n)
+	}
+}
+
+func TestRejectsOversizeCover(t *testing.T) {
+	caa := newFakeCAA(t)
+	caa.imgSize = maxCoverBytes + 1
+	dir := t.TempDir()
+	c := NewCovers(caa.URL, dir, time.Now)
+	_, err := c.Get(context.Background(), coverID, 250)
+	if err == nil || errors.Is(err, ErrNoCover) {
+		t.Fatalf("err = %v, want an error", err)
+	}
+	if entries, _ := os.ReadDir(dir); len(entries) != 0 {
+		t.Errorf("dir has %d entries, want 0", len(entries))
+	}
+}
+
+func TestRejectsNonImageContentType(t *testing.T) {
+	caa := newFakeCAA(t)
+	caa.imgType = "text/html"
+	dir := t.TempDir()
+	c := NewCovers(caa.URL, dir, time.Now)
+	_, err := c.Get(context.Background(), coverID, 250)
+	if err == nil || errors.Is(err, ErrNoCover) {
+		t.Fatalf("err = %v, want an error", err)
 	}
 	if entries, _ := os.ReadDir(dir); len(entries) != 0 {
 		t.Errorf("dir has %d entries, want 0", len(entries))

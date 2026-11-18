@@ -80,26 +80,29 @@ func (c *Covers) Get(ctx context.Context, albumID string, size int) (string, err
 	}
 
 	c.mu.Lock()
-	if call, ok := c.flight[name]; ok {
-		c.mu.Unlock()
-		select {
-		case <-call.done:
-			return call.path, call.err
-		case <-ctx.Done():
-			return "", ctx.Err()
-		}
+	call, ok := c.flight[name]
+	if !ok {
+		call = &coverCall{done: make(chan struct{})}
+		c.flight[name] = call
+		// The download is shared, so it must not depend on the context of
+		// whichever caller happened to start it (its client may disconnect).
+		// The HTTP client timeout still bounds it.
+		go func() {
+			call.path, call.err = c.fetch(context.WithoutCancel(ctx), albumID, size, file, marker)
+			c.mu.Lock()
+			delete(c.flight, name)
+			c.mu.Unlock()
+			close(call.done)
+		}()
 	}
-	call := &coverCall{done: make(chan struct{})}
-	c.flight[name] = call
 	c.mu.Unlock()
 
-	call.path, call.err = c.fetch(ctx, albumID, size, file, marker)
-
-	c.mu.Lock()
-	delete(c.flight, name)
-	c.mu.Unlock()
-	close(call.done)
-	return call.path, call.err
+	select {
+	case <-call.done:
+		return call.path, call.err
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
 }
 
 func (c *Covers) missingRecently(marker string) bool {
@@ -111,8 +114,6 @@ func (c *Covers) missingRecently(marker string) bool {
 }
 
 func (c *Covers) fetch(ctx context.Context, albumID string, size int, file, marker string) (string, error) {
-	// The first caller's context drives the shared download; a waiter that
-	// gives up does not cancel it.
 	url := fmt.Sprintf("%s/release-group/%s/front-%d", c.baseURL, albumID, size)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
