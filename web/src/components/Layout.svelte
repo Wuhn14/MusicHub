@@ -103,18 +103,13 @@
             <span>À identifier</span>
           </a>
         </li>
-        <li>
+        <li class="settings-item">
           <a
             href="/settings"
             class:active={active === 'settings'}
             aria-current={active === 'settings' ? 'page' : undefined}
           >
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path
-                fill="currentColor"
-                d="M19.43 12.98c.04-.32.07-.64.07-.98s-.03-.66-.07-.98l2.11-1.65a.5.5 0 0 0 .12-.64l-2-3.46a.5.5 0 0 0-.61-.22l-2.49 1a7.3 7.3 0 0 0-1.69-.98l-.38-2.65A.49.49 0 0 0 14 2h-4a.49.49 0 0 0-.49.42l-.38 2.65c-.61.25-1.17.59-1.69.98l-2.49-1a.5.5 0 0 0-.61.22l-2 3.46a.5.5 0 0 0 .12.64l2.11 1.65c-.04.32-.07.65-.07.98s.03.66.07.98l-2.11 1.65a.5.5 0 0 0-.12.64l2 3.46c.13.22.39.3.61.22l2.49-1c.52.4 1.08.73 1.69.98l.38 2.65c.03.24.24.42.49.42h4c.25 0 .46-.18.49-.42l.38-2.65c.61-.25 1.17-.59 1.69-.98l2.49 1c.23.09.49 0 .61-.22l2-3.46a.5.5 0 0 0-.12-.64l-2.11-1.65ZM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7Z"
-              />
-            </svg>
+            {@render gear()}
             <span>Réglages</span>
           </a>
         </li>
@@ -126,6 +121,14 @@
     <div class="mobile-brand">
       <span class="logo" aria-hidden="true"></span>
       <span>MusicHub</span>
+      <a
+        class="mobile-settings"
+        href="/settings"
+        aria-label="Réglages"
+        aria-current={active === 'settings' ? 'page' : undefined}
+      >
+        {@render gear()}
+      </a>
     </div>
     <div class="page">
       {@render children()}
@@ -134,6 +137,15 @@
 
   <PlayerBar />
 </div>
+
+{#snippet gear()}
+  <svg viewBox="0 0 24 24" aria-hidden="true">
+    <path
+      fill="currentColor"
+      d="M19.43 12.98c.04-.32.07-.64.07-.98s-.03-.66-.07-.98l2.11-1.65a.5.5 0 0 0 .12-.64l-2-3.46a.5.5 0 0 0-.61-.22l-2.49 1a7.3 7.3 0 0 0-1.69-.98l-.38-2.65A.49.49 0 0 0 14 2h-4a.49.49 0 0 0-.49.42l-.38 2.65c-.61.25-1.17.59-1.69.98l-2.49-1a.5.5 0 0 0-.61.22l-2 3.46a.5.5 0 0 0 .12.64l2.11 1.65c-.04.32-.07.65-.07.98s.03.66.07.98l-2.11 1.65a.5.5 0 0 0-.12.64l2 3.46c.13.22.39.3.61.22l2.49-1c.52.4 1.08.73 1.69.98l.38 2.65c.03.24.24.42.49.42h4c.25 0 .46-.18.49-.42l.38-2.65c.61-.25 1.17-.59 1.69-.98l2.49 1c.23.09.49 0 .61-.22l2-3.46a.5.5 0 0 0-.12-.64l-2.11-1.65ZM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7Z"
+    />
+  </svg>
+{/snippet}
 
 <style>
   .shell {
@@ -316,8 +328,16 @@
       gap: 0;
     }
 
+    /* Equal shares that may shrink below their label: the label ellipsizes
+       instead of pushing the bar wider than the screen. */
     nav li {
-      flex: 1;
+      flex: 1 1 0;
+      min-width: 0;
+    }
+
+    /* Settings move to the top bar on phones to keep five readable tabs. */
+    .settings-item {
+      display: none;
     }
 
     nav a {
@@ -354,8 +374,30 @@
 
     .mobile-brand {
       display: flex;
+      align-items: center;
       padding: 16px 16px 0;
       font-size: 1.15rem;
+    }
+
+    .mobile-settings {
+      display: grid;
+      place-items: center;
+      width: 40px;
+      height: 40px;
+      margin: -8px -8px -8px auto;
+      border-radius: 50%;
+      color: var(--text-muted);
+    }
+
+    .mobile-settings:hover,
+    .mobile-settings:focus-visible,
+    .mobile-settings[aria-current='page'] {
+      color: var(--accent);
+    }
+
+    .mobile-settings svg {
+      width: 22px;
+      height: 22px;
     }
 
     .mobile-brand .logo {

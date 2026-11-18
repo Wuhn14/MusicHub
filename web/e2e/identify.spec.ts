@@ -128,4 +128,8 @@ test('the identify page is usable on a phone', async ({ page, request }) => {
   expect(overflow).toBeLessThanOrEqual(0);
   const box = await card.boundingBox();
   expect(box && box.x + box.width).toBeLessThanOrEqual(375);
+  // Settings live in the top bar on phones, so the bottom bar keeps five tabs.
+  await expect(page.getByRole('navigation').getByRole('link', { name: 'Réglages' })).toBeHidden();
+  await page.locator('.mobile-brand').getByRole('link', { name: 'Réglages' }).click();
+  await expect(page.getByRole('heading', { level: 1, name: 'Réglages' })).toBeVisible();
 });
