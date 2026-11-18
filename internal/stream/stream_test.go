@@ -260,3 +260,19 @@ func waitFor(t *testing.T, cond func() bool) {
 	}
 	t.Fatal("condition not met within 3s")
 }
+
+func TestStreamsPendingUploadedFileFromIncoming(t *testing.T) {
+	f, p := sineFile(t, "up.mp3", 2)
+	f.Origin, f.Status = store.OriginUploaded, store.FilePending
+	ts := newRealServer(t, fakeFiles{testID: f}, 3)
+	raw, _ := os.ReadFile(p)
+
+	resp := get(t, ts.URL+"/api/stream/"+testID+"?quality=original", nil)
+	if resp.StatusCode != 200 {
+		t.Fatalf("status %d", resp.StatusCode)
+	}
+	got, _ := io.ReadAll(resp.Body)
+	if len(got) != len(raw) {
+		t.Errorf("got %d bytes, want %d", len(got), len(raw))
+	}
+}

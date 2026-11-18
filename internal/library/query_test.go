@@ -176,3 +176,35 @@ func TestTaggedAlbumYearIsMostCommon(t *testing.T) {
 		t.Errorf("track year = %q", tracks[0].Year)
 	}
 }
+
+func TestPendingUploadedFilesStayOutOfTheLibrary(t *testing.T) {
+	st := openStore(t)
+	ctx := context.Background()
+	tags := media.Tags{Title: "Up", Artist: "Someone", Album: "Sent"}
+	up, err := st.InsertUploadedFile(ctx, store.File{Path: "/incoming/up.mp3", Tags: tags, DurationMs: 1000})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A pending file found by the scanner (dropped) is still listed.
+	put(t, st, store.File{Path: "/m/dropped.mp3", Status: store.FilePending, Tags: media.Tags{Title: "Drop", Artist: "Someone", Album: "Found"}})
+
+	q := NewQuery(st)
+	tracks, err := q.Tracks(ctx, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tracks) != 1 || tracks[0].Title != "Drop" {
+		t.Fatalf("pending upload leaked into the library: %+v", tracks)
+	}
+	if albums, _ := q.Albums(ctx, ""); len(albums) != 1 {
+		t.Errorf("albums: %+v", albums)
+	}
+
+	// Once identified (or local) it appears.
+	if err := st.SetFileStatus(ctx, up.ID, store.FileLocal); err != nil {
+		t.Fatal(err)
+	}
+	if tracks, _ := q.Tracks(ctx, "", ""); len(tracks) != 2 {
+		t.Errorf("identified upload missing: %+v", tracks)
+	}
+}

@@ -185,6 +185,38 @@ WHERE id = ?`,
 	return out, tx.Commit()
 }
 
+// InsertUploadedFile records a file received through the upload endpoint:
+// origin "uploaded", status "pending", stored under its absolute path in the
+// incoming folder. A missing id is generated; the stored row is returned.
+func (s *Store) InsertUploadedFile(ctx context.Context, f File) (File, error) {
+	tags, err := json.Marshal(f.Tags)
+	if err != nil {
+		return File{}, err
+	}
+	if f.ID == "" {
+		f.ID = newFileID()
+	}
+	f.Origin, f.Status = OriginUploaded, FilePending
+	if f.AddedAt.IsZero() {
+		f.AddedAt = time.Now()
+	}
+	if f.LastSeen.IsZero() {
+		f.LastSeen = f.AddedAt
+	}
+	_, err = s.db.ExecContext(ctx, `
+INSERT INTO files (id, path, origin, size, mtime, format, codec, bitrate, sample_rate,
+  duration_ms, lossless, tags_json, status, recording_id, album_id, local_track_id,
+  disc, position, last_seen, missing_since, added_at)
+VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		f.ID, f.Path, f.Origin, f.Size, f.Mtime.UnixNano(), f.Format, f.Codec, f.BitRate,
+		f.SampleRate, f.DurationMs, f.Lossless, string(tags), f.Status, "", "", "",
+		f.Disc, f.Position, optTime(f.LastSeen), "", formatTime(f.AddedAt))
+	if err != nil {
+		return File{}, err
+	}
+	return s.GetFile(ctx, f.ID)
+}
+
 // GetFile returns the file with the given id, or ErrNotFound.
 func (s *Store) GetFile(ctx context.Context, id string) (File, error) {
 	f, err := scanFile(s.db.QueryRowContext(ctx, `SELECT `+fileCols+` FROM files WHERE id = ?`, id))
@@ -274,11 +306,13 @@ WHERE id = ?`, formatTime(seen), id); err != nil {
 
 // MarkMissing flags as missing every non-missing file last seen before
 // seenSince, remembering its status so it can be restored. It returns how
-// many files were flagged.
+// many files were flagged. Uploaded files still pending live in the incoming
+// folder, which the scanner never walks, so they are never flagged.
 func (s *Store) MarkMissing(ctx context.Context, seenSince, now time.Time) (int, error) {
 	res, err := s.db.ExecContext(ctx, `
 UPDATE files SET prev_status = status, status = 'missing', missing_since = ?
-WHERE status <> 'missing' AND last_seen < ?`, formatTime(now), formatTime(seenSince))
+WHERE status <> 'missing' AND last_seen < ?
+  AND NOT (origin = 'uploaded' AND status = 'pending')`, formatTime(now), formatTime(seenSince))
 	if err != nil {
 		return 0, err
 	}

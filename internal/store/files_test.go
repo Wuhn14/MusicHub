@@ -67,3 +67,22 @@ func TestPurgeMissing(t *testing.T) {
 		t.Errorf("remaining = %+v", all)
 	}
 }
+
+func TestMarkMissingSkipsPendingUploads(t *testing.T) {
+	s := openTemp(t)
+	ctx := context.Background()
+	t0 := time.Date(2026, 3, 1, 10, 0, 0, 0, time.UTC)
+	up, err := s.InsertUploadedFile(ctx, File{Path: "/data/incoming/a.mp3", Size: 5, Mtime: t0, AddedAt: t0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if up.Origin != OriginUploaded || up.Status != FilePending {
+		t.Fatalf("uploaded file = %+v", up)
+	}
+	if n, err := s.MarkMissing(ctx, t0.Add(time.Hour), t0.Add(time.Hour)); err != nil || n != 0 {
+		t.Fatalf("MarkMissing = %d, %v", n, err)
+	}
+	if got, _ := s.GetFile(ctx, up.ID); got.Status != FilePending {
+		t.Errorf("status = %s", got.Status)
+	}
+}

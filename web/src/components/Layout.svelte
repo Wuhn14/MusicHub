@@ -4,7 +4,7 @@
 
   interface Props {
     /** Navigation entry to highlight, if any. */
-    active: 'home' | 'search' | 'library' | 'settings' | null;
+    active: 'home' | 'search' | 'library' | 'upload' | 'settings' | null;
     /** Changes on every navigation; used to reset the scroll position. */
     pageKey: string;
     children: Snippet;
@@ -63,6 +63,18 @@
               <path fill="currentColor" d="M4 4h3v16H4V4Zm5 0h3v16H9V4Zm5.2.6 2.9-.8 3.7 15.6-2.9.8-3.7-15.6Z" />
             </svg>
             <span>Bibliothèque</span>
+          </a>
+        </li>
+        <li>
+          <a
+            href="/upload"
+            class:active={active === 'upload'}
+            aria-current={active === 'upload' ? 'page' : undefined}
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path fill="currentColor" d="M11 4h2v7h7v2h-7v7h-2v-7H4v-2h7V4Z" />
+            </svg>
+            <span>Ajouter</span>
           </a>
         </li>
         <li>
@@ -265,9 +277,9 @@
       flex-direction: column;
       justify-content: center;
       gap: 2px;
-      padding: 6px;
+      padding: 6px 2px;
       border-radius: 0;
-      font-size: 0.75rem;
+      font-size: 0.72rem;
       font-weight: 600;
     }
 

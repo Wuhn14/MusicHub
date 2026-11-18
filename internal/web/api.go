@@ -53,6 +53,8 @@ type Deps struct {
 	Stream       http.Handler
 	Availability AvailabilityReader
 	Identify     IdentifyStatusReader
+	Upload       UploadReceiver
+	Files        FileReader
 }
 
 type api struct {
@@ -63,12 +65,14 @@ type api struct {
 	lib      LibraryReader
 	avail    AvailabilityReader
 	identify IdentifyStatusReader
+	uploads  UploadReceiver
+	files    FileReader
 }
 
 // NewAPI returns the handler serving every /api route.
 func NewAPI(d Deps) http.Handler {
 	a := &api{cat: d.Catalog, covers: d.Covers, settings: d.Settings, tools: d.Tools, lib: d.Library,
-		avail: d.Availability, identify: d.Identify}
+		avail: d.Availability, identify: d.Identify, uploads: d.Upload, files: d.Files}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/search", requires(d.Catalog != nil, a.search))
 	mux.HandleFunc("GET /api/artists/{id}", requires(d.Catalog != nil, a.artist))
@@ -85,6 +89,8 @@ func NewAPI(d Deps) http.Handler {
 	mux.HandleFunc("POST /api/library/scan", requires(d.Library != nil, a.libScan))
 	mux.HandleFunc("GET /api/library/availability", requires(d.Availability != nil, a.availability))
 	mux.HandleFunc("GET /api/identify/status", requires(d.Identify != nil, a.identifyStatus))
+	mux.HandleFunc("POST /api/uploads", requires(d.Upload != nil, a.upload))
+	mux.HandleFunc("GET /api/files/{id}", requires(d.Files != nil, a.fileStatus))
 	mux.HandleFunc("GET /api/stream/{fileId}", requires(d.Stream != nil, func(w http.ResponseWriter, r *http.Request) {
 		d.Stream.ServeHTTP(w, r)
 	}))

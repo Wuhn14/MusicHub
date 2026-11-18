@@ -130,6 +130,11 @@ func (q *Query) load(ctx context.Context) (map[string]*group, error) {
 		if !playable(f) {
 			continue
 		}
+		// A freshly uploaded file waits in "À identifier" until it is
+		// identified; only then does it join the library.
+		if f.Origin == store.OriginUploaded && f.Status == store.FilePending {
+			continue
+		}
 		var (
 			key, title, artist, year, cover, albumID string
 			cat                                      *store.Album

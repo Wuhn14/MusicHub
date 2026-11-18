@@ -6,6 +6,7 @@ export type Route =
   | { name: 'home' }
   | { name: 'search'; query: string }
   | { name: 'settings' }
+  | { name: 'upload' }
   | { name: 'library'; tab: LibraryTab; sort: string; q: string; artist: string }
   | { name: 'libraryAlbum'; key: string }
   | { name: 'artist'; id: string }
@@ -34,6 +35,9 @@ export function parseRoute(loc: { pathname: string; search: string }): Route {
   }
   if (path === '/search' || path === '/search/') {
     return { name: 'search', query: new URLSearchParams(loc.search).get('q') ?? '' };
+  }
+  if (path === '/upload' || path === '/upload/') {
+    return { name: 'upload' };
   }
   if (path === '/settings' || path === '/settings/') {
     return { name: 'settings' };

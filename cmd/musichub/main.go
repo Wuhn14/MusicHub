@@ -25,6 +25,7 @@ import (
 	"github.com/Wuhn14/MusicHub/internal/settings"
 	"github.com/Wuhn14/MusicHub/internal/store"
 	"github.com/Wuhn14/MusicHub/internal/stream"
+	"github.com/Wuhn14/MusicHub/internal/upload"
 	"github.com/Wuhn14/MusicHub/internal/web"
 )
 
@@ -102,10 +103,21 @@ func run() error {
 		return s.MaxTranscodes
 	})
 
+	// Uploaded files wait in the incoming folder until they are identified.
+	incomingDir := filepath.Join(cfg.DataDir, "incoming")
+	removed, err := upload.CleanPartFiles(incomingDir)
+	if err != nil {
+		return fmt.Errorf("préparation du dossier d'envoi : %w", err)
+	}
+	if removed > 0 {
+		slog.Info("envois interrompus nettoyés", "count", removed)
+	}
+	receiver := upload.New(st, tools, incomingDir, settingsSvc, func(f store.File) { worker.Enqueue(f.ID) })
+
 	api := web.NewAPI(web.Deps{
 		Catalog: cat, Covers: covers, Settings: settingsSvc, Tools: tools,
 		Library: library.Service{Query: library.NewQuery(st), Runner: runner}, Stream: streamer,
-		Availability: st, Identify: worker,
+		Availability: st, Identify: worker, Upload: receiver, Files: st,
 	})
 	srv := &http.Server{
 		Addr:              fmt.Sprintf(":%d", cfg.Port),

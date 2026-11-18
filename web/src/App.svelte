@@ -5,6 +5,7 @@
   import Search from './routes/Search.svelte';
   import Artist from './routes/Artist.svelte';
   import Settings from './routes/Settings.svelte';
+  import Upload from './routes/Upload.svelte';
   import Library from './routes/Library.svelte';
   import LibraryAlbum from './routes/LibraryAlbum.svelte';
   import Album from './routes/Album.svelte';
@@ -21,7 +22,7 @@
     }),
   );
 
-  const active = $derived(route.name === 'home' ? 'home' : route.name === 'search' ? 'search' : route.name === 'settings' ? 'settings' : route.name === 'library' || route.name === 'libraryAlbum' ? 'library' : null);
+  const active = $derived(route.name === 'home' ? 'home' : route.name === 'search' ? 'search' : route.name === 'settings' ? 'settings' : route.name === 'upload' ? 'upload' : route.name === 'library' || route.name === 'libraryAlbum' ? 'library' : null);
 </script>
 
 <Layout {active} pageKey={String(visit)}>
@@ -32,6 +33,8 @@
       <Search initialQuery={route.query} />
     {:else if route.name === 'settings'}
       <Settings />
+    {:else if route.name === 'upload'}
+      <Upload />
     {:else if route.name === 'library'}
       <Library tab={route.tab} sort={route.sort} q={route.q} artist={route.artist} />
     {:else if route.name === 'libraryAlbum'}
