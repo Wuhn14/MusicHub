@@ -70,3 +70,13 @@ jobs:
           context: .
           platforms: linux/amd64,linux/arm64
           push: false
+      # A single-platform build loaded into Docker, to check that the image
+      # really ships working ffmpeg and fpcalc binaries.
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          tags: musichub:ci
+      - name: Check the bundled tools
+        run: docker run --rm --entrypoint sh musichub:ci -c 'ffmpeg -version && fpcalc -version'

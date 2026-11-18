@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/Wuhn14/MusicHub/internal/identify"
 	"github.com/Wuhn14/MusicHub/internal/store"
@@ -61,6 +62,28 @@ func displayName(name string) string {
 	return name
 }
 
+// uploadIdleTimeout is how long an upload may send nothing before it is
+// dropped: a stalled client must not hold a connection and a temporary file
+// forever, while a slow but steady one may take as long as it needs.
+var uploadIdleTimeout = 60 * time.Second
+
+// idleDeadlineReader pushes the connection's read deadline back before each
+// read, so only a stall (not a long upload) hits it.
+type idleDeadlineReader struct {
+	r    io.ReadCloser
+	rc   *http.ResponseController
+	idle time.Duration
+}
+
+func (d *idleDeadlineReader) Read(p []byte) (int, error) {
+	// Not every ResponseWriter supports deadlines (test recorders): the
+	// upload then simply has none.
+	_ = d.rc.SetReadDeadline(time.Now().Add(d.idle))
+	return d.r.Read(p)
+}
+
+func (d *idleDeadlineReader) Close() error { return d.r.Close() }
+
 // upload answers POST /api/uploads: one raw file per request, its name in the
 // URI-encoded X-File-Name header.
 func (a *api) upload(w http.ResponseWriter, r *http.Request) {
@@ -74,8 +97,10 @@ func (a *api) upload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	limit := a.uploads.MaxBytes(r.Context())
-	r.Body = http.MaxBytesReader(w, r.Body, limit)
+	body := &idleDeadlineReader{r: r.Body, rc: http.NewResponseController(w), idle: uploadIdleTimeout}
+	r.Body = http.MaxBytesReader(w, body, limit)
 	f, err := a.uploads.Receive(r.Context(), name, r.Body)
+	_ = body.rc.SetReadDeadline(time.Time{}) // the body is read: no more limit
 	switch {
 	case err == nil:
 	case errors.Is(err, upload.ErrUnsupportedFormat):

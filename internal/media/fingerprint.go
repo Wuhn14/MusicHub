@@ -34,12 +34,19 @@ func (t *Tools) Fingerprint(ctx context.Context, path string) (string, int, erro
 
 // WriteTags rewrites the tags of path without re-encoding. Empty fields (and
 // zero track/disc numbers) are left as they are. The file is remuxed to a
-// temporary file in the same directory, which then replaces the original.
+// temporary file in the same directory, which replaces the original only
+// once ffprobe confirms it kept the audio (same number of audio streams,
+// duration within one second); otherwise the original is kept and an error
+// is returned.
 func (t *Tools) WriteTags(ctx context.Context, path string, tg Tags) error {
 	path = safePath(path)
 	info, err := os.Stat(path)
 	if err != nil {
 		return err
+	}
+	before, err := t.layout(ctx, path)
+	if err != nil {
+		return fmt.Errorf("media: reading the file before writing tags: %w", err)
 	}
 	ext := strings.ToLower(filepath.Ext(path))
 	origExt := filepath.Ext(path)
@@ -98,9 +105,24 @@ func (t *Tools) WriteTags(ctx context.Context, path string, tg Tags) error {
 	if _, _, err := run(ctx, writeTagsTimeout, t.ffmpeg, args...); err != nil {
 		return err
 	}
+	if afterRemux != nil {
+		afterRemux(tmp)
+	}
+	after, err := t.layout(ctx, tmp)
+	if err != nil {
+		return fmt.Errorf("media: checking the rewritten file: %w", err)
+	}
+	if !sameAudio(before, after) {
+		return fmt.Errorf("media: rewritten file differs (%d audio streams, %d ms; was %d, %d ms): original kept",
+			after.streams, after.durationMs, before.streams, before.durationMs)
+	}
 	if err := os.Rename(tmp, path); err != nil {
 		return err
 	}
 	ok = true
 	return nil
 }
+
+// afterRemux, when set, runs on the temporary file right after ffmpeg wrote
+// it (a test seam to simulate a remux that lost audio).
+var afterRemux func(tmp string)

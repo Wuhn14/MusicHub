@@ -166,18 +166,27 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	startMs := int(startSec * 1000)
+	setHeaders := func() {
+		h := w.Header()
+		h.Set("Content-Type", "audio/mpeg")
+		h.Set("Cache-Control", "no-store")
+		if f.DurationMs > 0 {
+			h.Set("X-Content-Duration", strconv.FormatFloat(float64(f.DurationMs-startMs)/1000, 'f', 1, 64))
+		}
+	}
+	if r.Method == http.MethodHead {
+		// Headers only: no conversion is started and no slot is taken.
+		setHeaders()
+		w.WriteHeader(http.StatusOK)
+		return
+	}
 	if !s.acquire() {
 		fail(w, http.StatusServiceUnavailable, "Trop de conversions en cours, réessaie dans un instant.")
 		return
 	}
 	defer s.release()
 
-	h := w.Header()
-	h.Set("Content-Type", "audio/mpeg")
-	h.Set("Cache-Control", "no-store")
-	if f.DurationMs > 0 {
-		h.Set("X-Content-Duration", strconv.FormatFloat(float64(f.DurationMs-startMs)/1000, 'f', 1, 64))
-	}
+	setHeaders()
 	fw := &flushWriter{w: w, rc: http.NewResponseController(w)}
 	err = s.tools.Transcode(r.Context(), f.Path, startMs, kbps, fw)
 	switch {

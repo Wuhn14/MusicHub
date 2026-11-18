@@ -26,9 +26,9 @@ MusicHub est écrit en Go avec une interface web Svelte embarquée.
 
 **Étape 2 : bibliothèque et lecture**
 
-- **Scan de la bibliothèque** de votre dossier de musique (MP3, FLAC, M4A/AAC/ALAC, OGG Vorbis, Opus, WAV, AIFF), par album, artiste ou titre ; les fichiers illisibles sont signalés et le scan continue.
+- **Scan de la bibliothèque** de votre dossier de musique (MP3, FLAC, M4A/AAC/ALAC, OGG Vorbis, Opus, WAV, AIFF), par album, artiste ou titre ; les fichiers illisibles sont signalés et le scan continue. Les fichiers cachés et les dossiers système créés par un NAS (`@eaDir`, `#recycle`, `#snapshot`, `.@__thumb`, `@Recycle`, `lost+found`) sont ignorés, et un dossier que MusicHub n'a pas le droit de lire est passé sans masquer le reste de la bibliothèque.
 - **Envoi depuis le navigateur ou un téléphone** : déposez des fichiers ou un dossier sur la page « Ajouter ».
-- **Identification automatique** des fichiers envoyés : identifiant d'enregistrement MusicBrainz dans les tags, puis empreintes audio [AcoustID](https://acoustid.org/), puis recherche MusicBrainz sur les tags.
+- **Identification automatique** des fichiers envoyés et de ceux que vous déposez vous-même dans le dossier de musique : identifiant d'enregistrement MusicBrainz dans les tags, puis empreintes audio [AcoustID](https://acoustid.org/), puis recherche MusicBrainz sur les tags.
 - Un **écran « À identifier »** pour les fichiers non reconnus : choisir un enregistrement proposé, chercher dans le catalogue, ou créer un **titre local** (musique absente du catalogue, comme vos propres enregistrements).
 - **Rangement** : les fichiers envoyés et identifiés sont déplacés dans votre dossier de musique sous la forme `Artiste/Album (année)/NN - Titre`, avec leurs tags écrits. Les fichiers que vous déposez vous-même dans ce dossier ne sont jamais déplacés ni modifiés, sauf si vous l'activez dans les Réglages.
 - **Lecteur** avec file d'attente, commandes sur l'écran verrouillé (Media Session) et conversion MP3 à la volée en option (320, 192 ou 128 kbit/s) pour économiser la bande passante.

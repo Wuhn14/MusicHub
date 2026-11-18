@@ -3,7 +3,9 @@ package web
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -131,5 +133,44 @@ func TestAPIFileStatus(t *testing.T) {
 	}
 	if rec := send(t, h, "GET", "/api/files/nope", ""); rec.Code != 400 {
 		t.Errorf("malformed id: %d", rec.Code)
+	}
+}
+
+// stallUpload reports how its body read ended.
+type stallUpload struct{ done chan error }
+
+func (s *stallUpload) MaxBytes(context.Context) int64 { return 1 << 20 }
+func (s *stallUpload) Receive(_ context.Context, _ string, r io.Reader) (store.File, error) {
+	_, err := io.Copy(io.Discard, r)
+	s.done <- err
+	return store.File{}, err
+}
+
+func TestUploadStallIsDropped(t *testing.T) {
+	old := uploadIdleTimeout
+	uploadIdleTimeout = 200 * time.Millisecond
+	t.Cleanup(func() { uploadIdleTimeout = old })
+	su := &stallUpload{done: make(chan error, 1)}
+	ts := httptest.NewServer(NewAPI(Deps{Upload: su}))
+	t.Cleanup(ts.Close)
+
+	conn, err := net.Dial("tcp", ts.Listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	// Announces 1000 bytes, sends 10 slowly but steadily, then stalls.
+	fmt.Fprintf(conn, "POST /api/uploads HTTP/1.1\r\nHost: x\r\nX-File-Name: a.mp3\r\nContent-Length: 1000\r\n\r\n")
+	for i := 0; i < 10; i++ {
+		conn.Write([]byte("x"))
+		time.Sleep(50 * time.Millisecond) // under the idle timeout: not dropped
+	}
+	select {
+	case err := <-su.done:
+		if err == nil {
+			t.Fatal("stalled upload read to the end")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("stalled upload still open after 5 s")
 	}
 }

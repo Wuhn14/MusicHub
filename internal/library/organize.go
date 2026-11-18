@@ -503,7 +503,8 @@ func copyInto(src, dst string) error {
 // provably the same file (another name of it, or identical bytes); otherwise
 // the row goes back to the source, both files are kept, and PlaceStranded
 // moves it again. Errors on one row are logged and the next rows are still
-// repaired. The temporary files left in the music folder are removed.
+// repaired. The temporary files left in the music folder are removed later
+// by RemoveTemps, which walks the whole folder.
 func (o *Organizer) RepairPlacing(ctx context.Context) error {
 	o.mu.Lock()
 	defer o.mu.Unlock()
@@ -516,11 +517,36 @@ func (o *Organizer) RepairPlacing(ctx context.Context) error {
 			slog.Error("rangement interrompu non réparé", "file", f.ID, "path", f.Path, "from", f.PlacingFrom, "err", err)
 		}
 	}
-	n, terr := removeTemps(o.musicDir)
+	return err
+}
+
+// RemoveTemps deletes the temporary files a stop left in the music folder
+// and returns how many it removed. The walk of a large folder can take a
+// while, so it runs in the background after startup: the folder is walked
+// without the lock, then the leftovers are removed while no placing runs
+// (every temporary file of a placing that ran meanwhile is gone by then).
+func (o *Organizer) RemoveTemps(ctx context.Context) (int, error) {
+	found, err := findTemps(ctx, o.musicDir)
+	if err != nil || len(found) == 0 {
+		return 0, err
+	}
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	n := 0
+	for _, path := range found {
+		if err := ctx.Err(); err != nil {
+			return n, err
+		}
+		if rerr := os.Remove(path); rerr == nil {
+			n++
+		} else if !errors.Is(rerr, fs.ErrNotExist) {
+			slog.Warn("fichier temporaire non supprimé", "path", path, "err", rerr)
+		}
+	}
 	if n > 0 {
 		slog.Info("fichiers temporaires de rangement supprimés", "count", n)
 	}
-	return errors.Join(err, terr)
+	return n, nil
 }
 
 // repairOne settles one interrupted move (see RepairPlacing).
@@ -624,11 +650,14 @@ func sameContent(a, b string) (bool, error) {
 	}
 }
 
-// removeTemps deletes the leftover temporary files of the organizer and the
-// tag writer under root and returns how many it removed.
-func removeTemps(root string) (int, error) {
-	n := 0
+// findTemps lists the temporary files of the organizer and the tag writer
+// under root.
+func findTemps(ctx context.Context, root string) ([]string, error) {
+	var found []string
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if cerr := ctx.Err(); cerr != nil {
+			return cerr
+		}
 		if err != nil {
 			if path == root {
 				return err
@@ -640,17 +669,13 @@ func removeTemps(root string) (int, error) {
 		}
 		for _, p := range tempPrefixes {
 			if strings.HasPrefix(d.Name(), p) {
-				if rerr := os.Remove(path); rerr != nil {
-					slog.Warn("fichier temporaire non supprimé", "path", path, "err", rerr)
-				} else {
-					n++
-				}
+				found = append(found, path)
 				break
 			}
 		}
 		return nil
 	})
-	return n, err
+	return found, err
 }
 
 // windowsReserved are the device names Windows refuses as file names, with

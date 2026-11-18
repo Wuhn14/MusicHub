@@ -163,3 +163,43 @@ func atoi(s string) int {
 	n, _ := strconv.Atoi(s)
 	return n
 }
+
+// audioLayout is what a remux must keep: the number of audio streams and
+// the duration.
+type audioLayout struct {
+	streams    int
+	durationMs int
+}
+
+// layout reads the audio layout of a file with ffprobe.
+func (t *Tools) layout(ctx context.Context, path string) (audioLayout, error) {
+	out, _, err := run(ctx, probeTimeout, t.ffprobe,
+		"-v", "error", "-print_format", "json", "-show_format", "-show_streams", "-i", safePath(path))
+	if err != nil {
+		return audioLayout{}, err
+	}
+	var o ffprobeOutput
+	if err := json.Unmarshal(out, &o); err != nil {
+		return audioLayout{}, fmt.Errorf("media: parse ffprobe output: %w", err)
+	}
+	var l audioLayout
+	for _, s := range o.Streams {
+		if s.CodecType == "audio" {
+			l.streams++
+		}
+	}
+	if d, err := strconv.ParseFloat(o.Format.Duration, 64); err == nil && d >= 0 {
+		l.durationMs = int(math.Round(d * 1000))
+	}
+	return l, nil
+}
+
+// sameAudio reports whether a remuxed file kept the audio of the original:
+// as many audio streams (at least one) and a duration within one second.
+func sameAudio(before, after audioLayout) bool {
+	d := before.durationMs - after.durationMs
+	if d < 0 {
+		d = -d
+	}
+	return before.streams > 0 && after.streams == before.streams && d <= 1000
+}

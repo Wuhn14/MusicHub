@@ -83,6 +83,17 @@ func run() error {
 	if err := organizer.RepairPlacing(ctx); err != nil {
 		slog.Warn("réparation des rangements interrompus incomplète", "err", err)
 	}
+	// Their temporary files are removed in the background: walking a large
+	// music folder must not delay the server. The deferred wait runs before
+	// the database is closed.
+	tempsDone := make(chan struct{})
+	go func() {
+		defer close(tempsDone)
+		if _, err := organizer.RemoveTemps(ctx); err != nil && ctx.Err() == nil {
+			slog.Warn("fichiers temporaires de rangement non vérifiés", "err", err)
+		}
+	}()
+	defer func() { stop(); <-tempsDone }()
 	// Likewise for deletions of uploads interrupted by a stop.
 	restoredDel, removedDel, err := upload.RecoverDeletes(ctx, st, incomingDir)
 	if err != nil {

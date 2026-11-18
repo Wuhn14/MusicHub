@@ -36,6 +36,9 @@ const (
 	// artist with a huge catalogue cannot turn one page view into dozens of
 	// rate-limited requests.
 	maxArtistPages = 5
+	// maxDrain bounds how much of an error body is read (and discarded) so
+	// the connection can be reused.
+	maxDrain = 1 << 20
 )
 
 // TrackHit is a recording found by SearchTracks, with the album it appears on.
@@ -144,13 +147,13 @@ func (c *Client) do(ctx context.Context, u string, out any) (bool, error) {
 	defer resp.Body.Close()
 	switch {
 	case resp.StatusCode >= 500 || resp.StatusCode == http.StatusTooManyRequests:
-		_, _ = io.Copy(io.Discard, resp.Body)
+		_, _ = io.CopyN(io.Discard, resp.Body, maxDrain)
 		return true, ErrUnavailable
 	case resp.StatusCode == http.StatusNotFound:
-		_, _ = io.Copy(io.Discard, resp.Body)
+		_, _ = io.CopyN(io.Discard, resp.Body, maxDrain)
 		return false, ErrNotFound
 	case resp.StatusCode < 200 || resp.StatusCode > 299:
-		_, _ = io.Copy(io.Discard, resp.Body)
+		_, _ = io.CopyN(io.Discard, resp.Body, maxDrain)
 		return false, fmt.Errorf("musicbrainz: unexpected status %s", resp.Status)
 	}
 	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {

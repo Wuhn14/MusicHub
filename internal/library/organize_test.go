@@ -439,6 +439,10 @@ func TestRepairPlacingAfterCrash(t *testing.T) {
 		if row.Path != f.Path || row.PlacingFrom != "" || readFile(t, row.Path) != "audio" {
 			t.Fatalf("row = %q from %q", row.Path, row.PlacingFrom)
 		}
+		// The leftover temporary file goes in the background clean-up.
+		if n, err := e.org.RemoveTemps(ctx); err != nil || n != 1 {
+			t.Fatalf("RemoveTemps = %d, %v", n, err)
+		}
 		assertNoTemp(t, filepath.Dir(dst))
 		// The startup sweep places it again.
 		if n := e.org.PlaceStranded(ctx, e.incoming); n != 1 {
@@ -689,5 +693,29 @@ func TestOrganizeReusesTheFetchedRecording(t *testing.T) {
 	}
 	if want := filepath.Join(e.music, "Déjà", "Titres sans album", "Connu.mp3"); got.Path != want {
 		t.Errorf("path = %q, want %q", got.Path, want)
+	}
+}
+
+func TestRemoveTempsKeepsOtherFilesAndStops(t *testing.T) {
+	e := newOrgEnv(t, nil)
+	dir := filepath.Join(e.music, "A", "B")
+	os.MkdirAll(dir, 0o755)
+	for _, n := range []string{".musichub-move-1.mp3", ".musichub-tags-2.flac", "song.mp3", ".other"} {
+		os.WriteFile(filepath.Join(dir, n), []byte("x"), 0o644)
+	}
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := e.org.RemoveTemps(cancelled); err == nil {
+		t.Error("a cancelled clean-up must report it")
+	}
+	n, err := e.org.RemoveTemps(context.Background())
+	if err != nil || n != 2 {
+		t.Fatalf("RemoveTemps = %d, %v; want 2", n, err)
+	}
+	assertNoTemp(t, dir)
+	for _, keep := range []string{"song.mp3", ".other"} {
+		if _, err := os.Stat(filepath.Join(dir, keep)); err != nil {
+			t.Errorf("%s removed: %v", keep, err)
+		}
 	}
 }

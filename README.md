@@ -26,9 +26,9 @@ MusicHub is written in Go with an embedded Svelte web interface.
 
 **Step 2: library and playback**
 
-- **Library scan** of your music folder (MP3, FLAC, M4A/AAC/ALAC, OGG Vorbis, Opus, WAV, AIFF), by album, artist or track; unreadable files are flagged and the scan goes on.
+- **Library scan** of your music folder (MP3, FLAC, M4A/AAC/ALAC, OGG Vorbis, Opus, WAV, AIFF), by album, artist or track; unreadable files are flagged and the scan goes on. Hidden files and the system folders a NAS creates (`@eaDir`, `#recycle`, `#snapshot`, `.@__thumb`, `@Recycle`, `lost+found`) are ignored, and a folder MusicHub is not allowed to read is skipped without hiding the rest of the library.
 - **Upload from the browser or a phone**: drop files or a folder on the "Ajouter" page.
-- **Automatic identification** of uploaded files: MusicBrainz recording id in the tags, then [AcoustID](https://acoustid.org/) audio fingerprints, then a MusicBrainz search on the tags.
+- **Automatic identification** of uploaded files and of the files you drop in the music folder yourself: MusicBrainz recording id in the tags, then [AcoustID](https://acoustid.org/) audio fingerprints, then a MusicBrainz search on the tags.
 - An **"À identifier" screen** for the files that could not be matched: pick a proposed recording, search the catalogue, or create a **local track** (music that is not in the catalogue, such as your own recordings).
 - **Organizing**: identified uploads are moved into your music folder as `Artist/Album (year)/NN - Title`, with their tags written. Files you drop in the music folder yourself are never moved or modified unless you enable it in "Réglages".
 - **Player** with a queue, lock-screen controls (Media Session) and optional on-the-fly MP3 conversion (320, 192 or 128 kbps) to save bandwidth.

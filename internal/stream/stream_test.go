@@ -275,3 +275,37 @@ func TestStreamsPendingUploadedFileFromIncoming(t *testing.T) {
 		t.Errorf("got %d bytes, want %d", len(got), len(raw))
 	}
 }
+
+func TestHeadOfConversionTakesNoSlot(t *testing.T) {
+	s, url := holdServer(t, 1)
+	head := func() *http.Response {
+		t.Helper()
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		req, _ := http.NewRequestWithContext(ctx, "HEAD", url+"&start=60", nil)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			// The hold transcoder never returns: a HEAD that started it
+			// would time out here.
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		return resp
+	}
+	resp := head()
+	if resp.StatusCode != 200 || resp.Header.Get("Content-Type") != "audio/mpeg" || resp.Header.Get("X-Content-Duration") != "540.0" {
+		t.Fatalf("HEAD = %d %v", resp.StatusCode, resp.Header)
+	}
+	if n := s.InFlight(); n != 0 {
+		t.Fatalf("in flight after HEAD = %d", n)
+	}
+	// With the only slot taken, HEAD still answers.
+	get, cancel := open(t, url)
+	defer cancel()
+	if get.StatusCode != 200 {
+		t.Fatalf("GET = %d", get.StatusCode)
+	}
+	if resp := head(); resp.StatusCode != 200 {
+		t.Fatalf("HEAD with no free slot = %d", resp.StatusCode)
+	}
+}

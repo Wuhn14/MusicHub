@@ -254,3 +254,43 @@ func TestDashPrefixedPaths(t *testing.T) {
 		t.Errorf("Transcode: %v", err)
 	}
 }
+
+func TestWriteTagsKeepsOriginalWhenRemuxLosesAudio(t *testing.T) {
+	tl := tools(t)
+	dir := t.TempDir()
+	path := mediatest.Sine(t, dir, "long.flac", 4, map[string]string{"title": "old"})
+	short := mediatest.Sine(t, t.TempDir(), "short.flac", 1, nil)
+	original, _ := os.ReadFile(path)
+	// The remux comes out three seconds short.
+	afterRemux = func(tmp string) {
+		data, _ := os.ReadFile(short)
+		os.WriteFile(tmp, data, 0o644)
+	}
+	t.Cleanup(func() { afterRemux = nil })
+	if err := tl.WriteTags(context.Background(), path, Tags{Title: "new"}); err == nil {
+		t.Fatal("want an error")
+	}
+	if got, _ := os.ReadFile(path); !bytes.Equal(got, original) {
+		t.Error("original was replaced")
+	}
+	if entries, _ := os.ReadDir(dir); len(entries) != 1 {
+		t.Errorf("leftover files: %v", entries)
+	}
+}
+
+func TestSameAudio(t *testing.T) {
+	for _, tc := range []struct {
+		before, after audioLayout
+		want          bool
+	}{
+		{audioLayout{1, 200000}, audioLayout{1, 200000}, true},
+		{audioLayout{1, 200000}, audioLayout{1, 200999}, true},
+		{audioLayout{1, 200000}, audioLayout{1, 198999}, false},
+		{audioLayout{2, 200000}, audioLayout{1, 200000}, false},
+		{audioLayout{0, 0}, audioLayout{0, 0}, false},
+	} {
+		if got := sameAudio(tc.before, tc.after); got != tc.want {
+			t.Errorf("sameAudio(%+v, %+v) = %v", tc.before, tc.after, got)
+		}
+	}
+}

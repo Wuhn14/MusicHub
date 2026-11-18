@@ -164,7 +164,8 @@ func (c *Client) Lookup(ctx context.Context, key, fp string, durationSec int) ([
 }
 
 // do performs one request. The bool tells whether the failure is worth a
-// retry (5xx, 429, or an AcoustID service error).
+// retry: only a 5xx or a 429 is. An error that AcoustID reports in the JSON
+// body (bad key, bad fingerprint) is final.
 func (c *Client) do(ctx context.Context, body, key string) (jsonResponse, bool, error) {
 	var out jsonResponse
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/lookup", strings.NewReader(body))
@@ -182,7 +183,9 @@ func (c *Client) do(ctx context.Context, body, key string) (jsonResponse, bool, 
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 500 || resp.StatusCode == http.StatusTooManyRequests {
-		_, _ = io.Copy(io.Discard, resp.Body)
+		// Drain a bounded amount so the connection can be reused, without
+		// reading an endless body.
+		_, _ = io.CopyN(io.Discard, resp.Body, maxBody)
 		return out, true, ErrUnavailable
 	}
 	// AcoustID answers errors with a 4xx status and a JSON body: decode before
