@@ -90,7 +90,7 @@ func (a *api) putSettings(w http.ResponseWriter, r *http.Request) {
 	if !requireJSON(w, r) {
 		return
 	}
-	dec :=json.NewDecoder(http.MaxBytesReader(w, r.Body, maxSettingsBody))
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxSettingsBody))
 	dec.DisallowUnknownFields()
 	var in settingsPatchJSON
 	if err := dec.Decode(&in); err != nil {
