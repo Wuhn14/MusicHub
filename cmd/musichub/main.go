@@ -17,7 +17,9 @@ import (
 	"github.com/Wuhn14/MusicHub/internal/catalog"
 	"github.com/Wuhn14/MusicHub/internal/catalog/musicbrainz"
 	"github.com/Wuhn14/MusicHub/internal/config"
+	"github.com/Wuhn14/MusicHub/internal/media"
 	"github.com/Wuhn14/MusicHub/internal/server"
+	"github.com/Wuhn14/MusicHub/internal/settings"
 	"github.com/Wuhn14/MusicHub/internal/store"
 	"github.com/Wuhn14/MusicHub/internal/web"
 )
@@ -60,7 +62,7 @@ func run() error {
 
 	srv := &http.Server{
 		Addr:              fmt.Sprintf(":%d", cfg.Port),
-		Handler:           server.New(web.NewAPI(cat, covers), web.NewUI()),
+		Handler:           server.New(web.NewAPI(web.Deps{Catalog: cat, Covers: covers, Settings: settings.New(st), Tools: media.New(cfg.FFmpeg, cfg.FFprobe, cfg.FPcalc)}), web.NewUI()),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       120 * time.Second,
 		BaseContext:       func(net.Listener) context.Context { return ctx },

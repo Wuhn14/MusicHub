@@ -5,6 +5,7 @@
 export type Route =
   | { name: 'home' }
   | { name: 'search'; query: string }
+  | { name: 'settings' }
   | { name: 'artist'; id: string }
   | { name: 'album'; id: string }
   | { name: 'notFound' };
@@ -28,6 +29,9 @@ export function parseRoute(loc: { pathname: string; search: string }): Route {
   }
   if (path === '/search' || path === '/search/') {
     return { name: 'search', query: new URLSearchParams(loc.search).get('q') ?? '' };
+  }
+  if (path === '/settings' || path === '/settings/') {
+    return { name: 'settings' };
   }
   let m = artistPath.exec(path);
   if (m) {

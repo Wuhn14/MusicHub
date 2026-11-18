@@ -78,9 +78,14 @@ export function errorMessage(err: unknown): string {
 }
 
 async function getJSON<T>(url: string, signal?: AbortSignal): Promise<T> {
+  return requestJSON<T>(url, { signal });
+}
+
+async function requestJSON<T>(url: string, init: RequestInit): Promise<T> {
+  const signal = init.signal ?? undefined;
   let res: Response;
   try {
-    res = await fetch(url, { signal, headers: { Accept: 'application/json' } });
+    res = await fetch(url, { ...init, headers: { Accept: 'application/json', ...init.headers } });
   } catch (err) {
     if (isAbort(err)) {
       throw err;
@@ -125,4 +130,45 @@ export function getAlbum(id: string, signal?: AbortSignal): Promise<Album> {
 
 export function coverUrl(albumId: string, size: 250 | 500): string {
   return `/api/covers/${encodeURIComponent(albumId)}?size=${size}`;
+}
+
+/** The user settings as returned by the API; the AcoustID key is masked. */
+export interface Settings {
+  acoustidKey: string;
+  acoustidKeySet: boolean;
+  scanIntervalMinutes: number;
+  organizeDropped: boolean;
+  writeTagsUploaded: boolean;
+  writeTagsDropped: boolean;
+  duplicates: 'best' | 'keep-both' | 'keep-existing';
+  maxUploadBytes: number;
+  maxTranscodes: number;
+}
+
+/** Every field is optional; an absent field is left unchanged. */
+export type SettingsPatch = Partial<Omit<Settings, 'acoustidKeySet'>>;
+
+export interface ToolStatus {
+  name: string;
+  path: string;
+  version: string;
+  available: boolean;
+  error: string;
+}
+
+export function getSettings(signal?: AbortSignal): Promise<Settings> {
+  return getJSON('/api/settings', signal);
+}
+
+export function saveSettings(patch: SettingsPatch): Promise<Settings> {
+  return requestJSON('/api/settings', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(patch),
+  });
+}
+
+export async function getSystem(signal?: AbortSignal): Promise<ToolStatus[]> {
+  const res = await getJSON<{ tools: ToolStatus[] }>('/api/system', signal);
+  return res.tools;
 }

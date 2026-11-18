@@ -93,7 +93,7 @@ func TestSearch(t *testing.T) {
 			}},
 		}, nil
 	}}
-	rec := do(t, NewAPI(cat, fakeCovers{}), "GET", "/api/search?q=exemples")
+	rec := do(t, NewAPI(Deps{Catalog: cat, Covers: fakeCovers{}}), "GET", "/api/search?q=exemples")
 	if rec.Code != 200 {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body)
 	}
@@ -131,7 +131,7 @@ func TestSearch(t *testing.T) {
 }
 
 func TestSearchEmptyEncodesEmptyArrays(t *testing.T) {
-	rec := do(t, NewAPI(fakeCatalog{}, fakeCovers{}), "GET", "/api/search")
+	rec := do(t, NewAPI(Deps{Catalog: fakeCatalog{}, Covers: fakeCovers{}}), "GET", "/api/search")
 	if rec.Code != 200 {
 		t.Fatalf("status %d", rec.Code)
 	}
@@ -141,7 +141,7 @@ func TestSearchEmptyEncodesEmptyArrays(t *testing.T) {
 }
 
 func TestSearchRejectsLongQuery(t *testing.T) {
-	h := NewAPI(fakeCatalog{}, fakeCovers{})
+	h := NewAPI(Deps{Catalog: fakeCatalog{}, Covers: fakeCovers{}})
 	wantError(t, do(t, h, "GET", "/api/search?q="+strings.Repeat("a", 201)), 400, "Recherche trop longue.")
 	if rec := do(t, h, "GET", "/api/search?q="+strings.Repeat("é", 200)); rec.Code != 200 {
 		t.Fatalf("200 runes should pass, got %d", rec.Code)
@@ -156,7 +156,7 @@ func TestArtist(t *testing.T) {
 		return store.Artist{ID: artistID, Name: "Les Exemples", SortName: "Exemples, Les", Country: "FR"},
 			[]store.Album{{ID: albumID, Title: "Premier", SecondaryTypes: []string{"Live"}}}, nil
 	}}
-	rec := do(t, NewAPI(cat, fakeCovers{}), "GET", "/api/artists/"+artistID)
+	rec := do(t, NewAPI(Deps{Catalog: cat, Covers: fakeCovers{}}), "GET", "/api/artists/"+artistID)
 	if rec.Code != 200 {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body)
 	}
@@ -182,7 +182,7 @@ func TestArtistWithoutAlbumsEncodesEmptyArray(t *testing.T) {
 	cat := fakeCatalog{artist: func(context.Context, string) (store.Artist, []store.Album, error) {
 		return store.Artist{ID: artistID}, nil, nil
 	}}
-	rec := do(t, NewAPI(cat, fakeCovers{}), "GET", "/api/artists/"+artistID)
+	rec := do(t, NewAPI(Deps{Catalog: cat, Covers: fakeCovers{}}), "GET", "/api/artists/"+artistID)
 	if !strings.Contains(rec.Body.String(), `"albums":[]`) {
 		t.Fatalf("body = %s", rec.Body)
 	}
@@ -198,7 +198,7 @@ func TestAlbum(t *testing.T) {
 			},
 		}, nil
 	}}
-	rec := do(t, NewAPI(cat, fakeCovers{}), "GET", "/api/albums/"+albumID)
+	rec := do(t, NewAPI(Deps{Catalog: cat, Covers: fakeCovers{}}), "GET", "/api/albums/"+albumID)
 	if rec.Code != 200 {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body)
 	}
@@ -224,10 +224,10 @@ func TestRejectsInvalidMBID(t *testing.T) {
 		t.Error("catalog must not be called")
 		return store.Album{}, nil
 	}
-	h := NewAPI(fakeCatalog{album: fail}, fakeCovers{get: func(context.Context, string, int) (string, error) {
+	h := NewAPI(Deps{Catalog: fakeCatalog{album: fail}, Covers: fakeCovers{get: func(context.Context, string, int) (string, error) {
 		t.Error("covers must not be called")
 		return "", nil
-	}})
+	}}})
 	for _, p := range []string{
 		"/api/albums/not-a-uuid",
 		"/api/albums/..%2F..%2Fetc",
@@ -243,7 +243,7 @@ func TestRejectsInvalidMBID(t *testing.T) {
 func TestNotFoundMapsTo404(t *testing.T) {
 	for _, e := range []error{store.ErrNotFound, musicbrainz.ErrNotFound} {
 		cat := fakeCatalog{album: func(context.Context, string) (store.Album, error) { return store.Album{}, e }}
-		wantError(t, do(t, NewAPI(cat, fakeCovers{}), "GET", "/api/albums/"+albumID), 404, "Introuvable.")
+		wantError(t, do(t, NewAPI(Deps{Catalog: cat, Covers: fakeCovers{}}), "GET", "/api/albums/"+albumID), 404, "Introuvable.")
 	}
 }
 
@@ -251,7 +251,7 @@ func TestUnavailableMapsTo502(t *testing.T) {
 	cat := fakeCatalog{search: func(context.Context, string) (catalog.SearchResult, error) {
 		return catalog.SearchResult{}, errors.Join(errors.New("boom"), musicbrainz.ErrUnavailable)
 	}}
-	wantError(t, do(t, NewAPI(cat, fakeCovers{}), "GET", "/api/search?q=x"), 502,
+	wantError(t, do(t, NewAPI(Deps{Catalog: cat, Covers: fakeCovers{}}), "GET", "/api/search?q=x"), 502,
 		"MusicBrainz est momentanément indisponible, réessaie dans un instant.")
 }
 
@@ -259,7 +259,7 @@ func TestOtherErrorIs500WithoutDetail(t *testing.T) {
 	cat := fakeCatalog{album: func(context.Context, string) (store.Album, error) {
 		return store.Album{}, errors.New("secret sqlite detail")
 	}}
-	rec := do(t, NewAPI(cat, fakeCovers{}), "GET", "/api/albums/"+albumID)
+	rec := do(t, NewAPI(Deps{Catalog: cat, Covers: fakeCovers{}}), "GET", "/api/albums/"+albumID)
 	wantError(t, rec, 500, "Erreur interne.")
 	if strings.Contains(rec.Body.String(), "secret") {
 		t.Fatal("internal detail leaked")
@@ -267,7 +267,7 @@ func TestOtherErrorIs500WithoutDetail(t *testing.T) {
 }
 
 func TestUnknownAPIPathIsJSON404(t *testing.T) {
-	h := NewAPI(fakeCatalog{}, fakeCovers{})
+	h := NewAPI(Deps{Catalog: fakeCatalog{}, Covers: fakeCovers{}})
 	wantError(t, do(t, h, "GET", "/api/nope"), 404, "Introuvable.")
 	wantError(t, do(t, h, "GET", "/api/albums/"), 404, "Introuvable.")
 }
@@ -279,9 +279,9 @@ func TestCoverServesImageWithCacheHeader(t *testing.T) {
 		t.Fatal(err)
 	}
 	var size int
-	h := NewAPI(fakeCatalog{}, fakeCovers{gotSize: &size, get: func(context.Context, string, int) (string, error) {
+	h := NewAPI(Deps{Catalog: fakeCatalog{}, Covers: fakeCovers{gotSize: &size, get: func(context.Context, string, int) (string, error) {
 		return path, nil
-	}})
+	}}})
 	rec := do(t, h, "GET", "/api/covers/"+albumID+"?size=500")
 	if rec.Code != 200 {
 		t.Fatalf("status %d", rec.Code)
@@ -305,23 +305,23 @@ func TestCoverServesImageWithCacheHeader(t *testing.T) {
 }
 
 func TestMissingCoverIs404(t *testing.T) {
-	h := NewAPI(fakeCatalog{}, fakeCovers{get: func(context.Context, string, int) (string, error) {
+	h := NewAPI(Deps{Catalog: fakeCatalog{}, Covers: fakeCovers{get: func(context.Context, string, int) (string, error) {
 		return "", catalog.ErrNoCover
-	}})
+	}}})
 	wantError(t, do(t, h, "GET", "/api/covers/"+albumID), 404, "Introuvable.")
 }
 
 func TestCoverUnavailableMapsTo502(t *testing.T) {
-	h := NewAPI(fakeCatalog{}, fakeCovers{get: func(context.Context, string, int) (string, error) {
+	h := NewAPI(Deps{Catalog: fakeCatalog{}, Covers: fakeCovers{get: func(context.Context, string, int) (string, error) {
 		return "", fmt.Errorf("%w: unexpected status 503", catalog.ErrCoverUnavailable)
-	}})
+	}}})
 	wantError(t, do(t, h, "GET", "/api/covers/"+albumID), 502, "Les pochettes sont momentanément indisponibles.")
 }
 
 func TestCoverFileVanishedIs404(t *testing.T) {
-	h := NewAPI(fakeCatalog{}, fakeCovers{get: func(context.Context, string, int) (string, error) {
+	h := NewAPI(Deps{Catalog: fakeCatalog{}, Covers: fakeCovers{get: func(context.Context, string, int) (string, error) {
 		return filepath.Join(t.TempDir(), "gone.jpg"), nil
-	}})
+	}}})
 	wantError(t, do(t, h, "GET", "/api/covers/"+albumID), 404, "Introuvable.")
 }
 
@@ -332,7 +332,7 @@ func TestCatalogDeadlineMapsTo502(t *testing.T) {
 		return store.Album{}, fmt.Errorf("waiting for MusicBrainz: %w", context.DeadlineExceeded)
 	}}
 	start := time.Now()
-	rec := do(t, NewAPI(cat, fakeCovers{}), "GET", "/api/albums/"+albumID)
+	rec := do(t, NewAPI(Deps{Catalog: cat, Covers: fakeCovers{}}), "GET", "/api/albums/"+albumID)
 	wantError(t, rec, 502, "MusicBrainz est momentanément indisponible, réessaie dans un instant.")
 	if got := deadline.Sub(start); got < 50*time.Second || got > 61*time.Second {
 		t.Errorf("catalog call deadline = %v from now, want about 60s", got)

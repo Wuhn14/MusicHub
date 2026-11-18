@@ -41,23 +41,47 @@ type CoverGetter interface {
 	Get(ctx context.Context, albumID string, size int) (string, error)
 }
 
+// Deps are the services the API routes depend on. A nil field makes the
+// routes that need it answer 503, so a partially wired server still starts.
+type Deps struct {
+	Catalog  CatalogReader
+	Covers   CoverGetter
+	Settings SettingsService
+	Tools    ToolStatusReader
+}
+
 type api struct {
-	cat    CatalogReader
-	covers CoverGetter
+	cat      CatalogReader
+	covers   CoverGetter
+	settings SettingsService
+	tools    ToolStatusReader
 }
 
 // NewAPI returns the handler serving every /api route.
-func NewAPI(cat CatalogReader, covers CoverGetter) http.Handler {
-	a := &api{cat: cat, covers: covers}
+func NewAPI(d Deps) http.Handler {
+	a := &api{cat: d.Catalog, covers: d.Covers, settings: d.Settings, tools: d.Tools}
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /api/search", a.search)
-	mux.HandleFunc("GET /api/artists/{id}", a.artist)
-	mux.HandleFunc("GET /api/albums/{id}", a.album)
-	mux.HandleFunc("GET /api/covers/{id}", a.cover)
+	mux.HandleFunc("GET /api/search", requires(d.Catalog != nil, a.search))
+	mux.HandleFunc("GET /api/artists/{id}", requires(d.Catalog != nil, a.artist))
+	mux.HandleFunc("GET /api/albums/{id}", requires(d.Catalog != nil, a.album))
+	mux.HandleFunc("GET /api/covers/{id}", requires(d.Covers != nil, a.cover))
+	mux.HandleFunc("GET /api/settings", requires(d.Settings != nil, a.getSettings))
+	mux.HandleFunc("PUT /api/settings", requires(d.Settings != nil, a.putSettings))
+	mux.HandleFunc("GET /api/system", requires(d.Tools != nil, a.system))
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "Introuvable.")
 	})
 	return mux
+}
+
+// requires returns h when its dependency is wired, and a 503 handler otherwise.
+func requires(ok bool, h http.HandlerFunc) http.HandlerFunc {
+	if ok {
+		return h
+	}
+	return func(w http.ResponseWriter, _ *http.Request) {
+		writeError(w, http.StatusServiceUnavailable, "Fonction indisponible.")
+	}
 }
 
 // JSON response shapes (camelCase, never serialising store structs directly).
