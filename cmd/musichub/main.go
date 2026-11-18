@@ -17,6 +17,7 @@ import (
 	"github.com/Wuhn14/MusicHub/internal/catalog"
 	"github.com/Wuhn14/MusicHub/internal/catalog/musicbrainz"
 	"github.com/Wuhn14/MusicHub/internal/config"
+	"github.com/Wuhn14/MusicHub/internal/library"
 	"github.com/Wuhn14/MusicHub/internal/media"
 	"github.com/Wuhn14/MusicHub/internal/server"
 	"github.com/Wuhn14/MusicHub/internal/settings"
@@ -60,9 +61,21 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	tools := media.New(cfg.FFmpeg, cfg.FFprobe, cfg.FPcalc)
+	settingsSvc := settings.New(st)
+	scanner := library.NewScanner(st, tools, cfg.MusicDir, time.Now)
+	runner := library.NewRunner(scanner, func() time.Duration {
+		s, err := settingsSvc.Get(ctx)
+		if err != nil || s.ScanInterval <= 0 {
+			return 15 * time.Minute
+		}
+		return s.ScanInterval
+	})
+	go runner.Run(ctx)
+
 	srv := &http.Server{
 		Addr:              fmt.Sprintf(":%d", cfg.Port),
-		Handler:           server.New(web.NewAPI(web.Deps{Catalog: cat, Covers: covers, Settings: settings.New(st), Tools: media.New(cfg.FFmpeg, cfg.FFprobe, cfg.FPcalc)}), web.NewUI()),
+		Handler:           server.New(web.NewAPI(web.Deps{Catalog: cat, Covers: covers, Settings: settingsSvc, Tools: tools}), web.NewUI()),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       120 * time.Second,
 		BaseContext:       func(net.Listener) context.Context { return ctx },
