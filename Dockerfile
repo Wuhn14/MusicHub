@@ -26,7 +26,9 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
 # Stage 3: runtime image. Alpine provides ffmpeg/ffprobe and fpcalc (Chromaprint),
 # which MusicHub runs as sub-processes. It runs as the non-root user musichub (65532).
 FROM alpine:3.22
-RUN apk add --no-cache ffmpeg chromaprint ca-certificates tzdata \n    && addgroup -g 65532 -S musichub \n    && adduser -u 65532 -S -G musichub -H -h /data -s /sbin/nologin musichub
+RUN apk add --no-cache ffmpeg chromaprint ca-certificates tzdata \
+    && addgroup -g 65532 -S musichub \
+    && adduser -u 65532 -S -G musichub -H -h /data -s /sbin/nologin musichub
 COPY --from=build /out/musichub /usr/local/bin/musichub
 COPY --from=build --chown=65532:65532 /out/data /data
 COPY --from=build --chown=65532:65532 /out/music /music
