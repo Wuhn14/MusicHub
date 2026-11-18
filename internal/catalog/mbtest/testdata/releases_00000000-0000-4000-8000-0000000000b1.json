@@ -1,0 +1,7 @@
+{"release-count":5,"releases":[
+{"id":"00000000-0000-4000-8000-0000000000c5","status":"Official","media":[{"position":1,"track-count":1}]},
+{"id":"00000000-0000-4000-8000-0000000000c4","status":"Bootleg","date":"2001-01-01","media":[{"position":1,"track-count":1}]},
+{"id":"00000000-0000-4000-8000-0000000000c3","status":"Official","date":"2005-09-09","media":[{"position":1,"track-count":1}]},
+{"id":"00000000-0000-4000-8000-0000000000c2","status":"Official","date":"2003-05-12","media":[{"position":1,"track-count":3},{"position":2,"track-count":2}]},
+{"id":"00000000-0000-4000-8000-0000000000c1","status":"Official","date":"2003-05-12","media":[{"position":1,"track-count":2},{"position":2,"track-count":1}]}
+]}

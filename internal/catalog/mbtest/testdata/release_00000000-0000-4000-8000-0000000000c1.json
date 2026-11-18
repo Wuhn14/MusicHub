@@ -1,0 +1,7 @@
+{"id":"00000000-0000-4000-8000-0000000000c1","media":[
+{"position":1,"tracks":[
+ {"position":1,"title":"Opening Tide","length":180000,"recording":{"id":"00000000-0000-4000-8000-0000000000e1","title":"Opening Tide","length":181000}},
+ {"position":2,"title":"Second Wind","recording":{"id":"00000000-0000-4000-8000-0000000000e2","title":"Second Wind","length":240000}}]},
+{"position":2,"tracks":[
+ {"position":1,"title":"Silent Close","recording":{"id":"00000000-0000-4000-8000-0000000000e3","title":"Silent Close"}}]}
+]}
