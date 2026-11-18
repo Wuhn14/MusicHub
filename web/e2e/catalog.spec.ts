@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test';
 
 // All data comes from the invented fixtures served by cmd/fakemb.
-test('search an artist, open its page, then an album with its tracks', async ({ page }) => {
+test('search an artist, open its Albums section, then an album with its tracks', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('link', { name: 'Recherche' }).first().click();
 
@@ -12,10 +12,10 @@ test('search an artist, open its page, then an album with its tracks', async ({ 
   await expect(page).toHaveURL(/\/artist\//);
   await expect(page.getByRole('heading', { level: 1, name: 'Lumen Harbor' })).toBeVisible();
 
-  // The invented artist has no discography: go back to the search results
-  // and open the album from there.
-  await page.goBack();
-  await page.getByRole('link', { name: /Paper Lanterns/ }).first().click();
+  // The discography lists the album under "Albums"; open it from there.
+  const albums = page.getByRole('region', { name: 'Albums' });
+  await expect(albums).toBeVisible();
+  await albums.getByRole('link', { name: /Paper Lanterns/ }).click();
   await expect(page).toHaveURL(/\/album\//);
   await expect(page.getByRole('heading', { level: 1, name: 'Paper Lanterns' })).toBeVisible();
 
