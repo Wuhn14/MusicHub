@@ -41,10 +41,11 @@
 
   const sortValue = $derived<LibrarySort>(sort === 'name' || sort === 'year' ? sort : 'added');
 
-  function libUrl(next: { tab: LibraryTab; sort?: string; artist?: string }): string {
+  function libUrl(next: { tab: LibraryTab; sort?: string; artist?: string; q?: string }): string {
     const p = new URLSearchParams({ tab: next.tab });
     if (next.sort && next.sort !== 'added') p.set('sort', next.sort);
     if (next.artist) p.set('artist', next.artist);
+    if (next.q) p.set('q', next.q);
     return `/library?${p}`;
   }
 
@@ -117,6 +118,8 @@
   let scanError = $state('');
   let waiting = $state(false);
   let pollTick = $state(0);
+  // How many polls were spent waiting for a requested scan to start.
+  let waitTicks = $state(0);
 
   $effect(() => {
     void pollTick;
@@ -129,8 +132,9 @@
         if (s.running) {
           waiting = false;
           timer = setTimeout(() => (pollTick += 1), 2000);
-        } else if (waiting && pollTick < 4) {
+        } else if (waiting && waitTicks < 4) {
           // The scan was requested but has not started yet.
+          waitTicks += 1;
           timer = setTimeout(() => (pollTick += 1), 2000);
         } else {
           waiting = false;
@@ -151,7 +155,8 @@
     try {
       await startScan();
       waiting = true;
-      pollTick = 0;
+      waitTicks = 0;
+      pollTick += 1;
     } catch (err) {
       scanError = errorMessage(err);
     }
@@ -219,7 +224,7 @@
         <span>Trier par</span>
         <select
           value={sortValue}
-          onchange={(e) => navigate(libUrl({ tab, sort: e.currentTarget.value, artist }))}
+          onchange={(e) => navigate(libUrl({ tab, sort: e.currentTarget.value, artist, q: tab === 'tracks' ? appliedQ : '' }))}
         >
           {#each sortOptions as o (o.value)}
             <option value={o.value}>{o.label}</option>

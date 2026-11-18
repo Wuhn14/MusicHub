@@ -11,15 +11,19 @@ export function formatDuration(ms: number): string {
   return `${minutes}:${String(seconds).padStart(2, '0')}`;
 }
 
-/** Formats a total running time, e.g. "42 min" or "1 h 05 min". */
+/** Formats a total running time: "45 s", "1 min 30 s" or "1 h 05 min". */
 export function formatTotal(ms: number): string {
   if (!Number.isFinite(ms) || ms <= 0) {
     return '';
   }
-  const minutes = Math.round(ms / 60000);
-  if (minutes < 60) {
-    return `${minutes} min`;
+  const seconds = Math.round(ms / 1000);
+  if (seconds < 60) {
+    return `${seconds} s`;
   }
+  if (seconds < 3600) {
+    return `${Math.floor(seconds / 60)} min ${String(seconds % 60).padStart(2, '0')} s`.replace(' 00 s', '');
+  }
+  const minutes = Math.round(seconds / 60);
   return `${Math.floor(minutes / 60)} h ${String(minutes % 60).padStart(2, '0')} min`;
 }
 

@@ -3,7 +3,9 @@ package library
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
+	"log/slog"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -89,6 +91,31 @@ func decodeKey(key string) (string, error) {
 
 func norm(s string) string { return strings.ToLower(strings.TrimSpace(s)) }
 
+// foldTable maps accented Latin letters to their base letters (lower case).
+var foldTable = func() map[rune]rune {
+	m := map[rune]rune{}
+	for base, accented := range map[rune]string{
+		'a': "àáâãäåāăą", 'c': "çćĉċč", 'd': "ďđ", 'e': "èéêëēĕėęě", 'g': "ĝğġģ", 'h': "ĥħ",
+		'i': "ìíîïĩīĭįı", 'j': "ĵ", 'k': "ķ", 'l': "ĺļľŀł", 'n': "ñńņňŉ", 'o': "òóôõöøōŏő",
+		'r': "ŕŗř", 's': "śŝşšß", 't': "ţťŧ", 'u': "ùúûüũūŭůűų", 'w': "ŵ", 'y': "ýÿŷ", 'z': "źżž",
+	} {
+		for _, r := range accented {
+			m[r] = base
+		}
+	}
+	return m
+}()
+
+// fold lower-cases s, trims it and strips accents, so searches ignore both.
+func fold(s string) string {
+	return strings.Map(func(r rune) rune {
+		if b, ok := foldTable[r]; ok {
+			return b
+		}
+		return r
+	}, norm(s))
+}
+
 func yearFromDate(d string) string {
 	d = strings.TrimSpace(d)
 	if len(d) >= 4 && strings.Trim(d[:4], "0123456789") == "" {
@@ -108,6 +135,8 @@ func playable(f store.File) bool {
 type group struct {
 	album  LibAlbum
 	tracks []LibTrack
+	years  []string // distinct non-empty tag years, in first-seen order
+	counts map[string]int
 }
 
 // load groups every playable file into albums, keyed by album key.
@@ -130,8 +159,12 @@ func (q *Query) load(ctx context.Context) (map[string]*group, error) {
 			albumID = f.AlbumID
 			c, seen := catalogAlbums[albumID]
 			if !seen {
-				if al, err := q.st.GetAlbum(ctx, albumID); err == nil {
+				al, err := q.st.GetAlbum(ctx, albumID)
+				switch {
+				case err == nil:
 					c = &al
+				case !errors.Is(err, store.ErrNotFound):
+					slog.Warn("album du catalogue illisible, retour aux tags", "album", albumID, "err", err)
 				}
 				catalogAlbums[albumID] = c
 			}
@@ -160,10 +193,25 @@ func (q *Query) load(ctx context.Context) (map[string]*group, error) {
 			if artist == "" {
 				artist = unknownArtist
 			}
-			g = &group{album: LibAlbum{Key: key, Title: title, Artist: artist, Year: year, CoverURL: cover, AlbumID: albumID}}
+			g = &group{album: LibAlbum{Key: key, Title: title, Artist: artist, Year: year, CoverURL: cover, AlbumID: albumID}, counts: map[string]int{}}
 			groups[key] = g
 		}
 		a := &g.album
+		if cat == nil {
+			// Tagged albums: fill gaps from later files, and vote on the year.
+			if a.Title == noAlbumTitle && title != "" {
+				a.Title = title
+			}
+			if a.Artist == unknownArtist && artist != "" {
+				a.Artist = artist
+			}
+			if year != "" {
+				if g.counts[year] == 0 {
+					g.years = append(g.years, year)
+				}
+				g.counts[year]++
+			}
+		}
 		a.TrackCount++
 		a.DurationMs += f.DurationMs
 		a.Local = a.Local || f.Status == store.FileLocal
@@ -171,6 +219,21 @@ func (q *Query) load(ctx context.Context) (map[string]*group, error) {
 			a.AddedAt = f.AddedAt
 		}
 		g.tracks = append(g.tracks, trackOf(f, g.album, cat))
+	}
+	for _, g := range groups {
+		// Most common tag year; ties go to the earliest.
+		if g.album.AlbumID == "" {
+			best := ""
+			for _, y := range g.years {
+				if best == "" || g.counts[y] > g.counts[best] || (g.counts[y] == g.counts[best] && y < best) {
+					best = y
+				}
+			}
+			g.album.Year = best
+		}
+		for i := range g.tracks {
+			g.tracks[i].Album, g.tracks[i].Year = g.album.Title, g.album.Year
+		}
 	}
 	return groups, nil
 }
@@ -297,12 +360,12 @@ func (q *Query) Tracks(ctx context.Context, sortBy, query string) ([]LibTrack, e
 	if err != nil {
 		return nil, err
 	}
-	needle := norm(query)
+	needle := fold(query)
 	out := []LibTrack{}
 	for _, g := range groups {
 		for _, t := range g.tracks {
-			if needle == "" || strings.Contains(norm(t.Title), needle) ||
-				strings.Contains(norm(t.Artist), needle) || strings.Contains(norm(t.Album), needle) {
+			if needle == "" || strings.Contains(fold(t.Title), needle) ||
+				strings.Contains(fold(t.Artist), needle) || strings.Contains(fold(t.Album), needle) {
 				out = append(out, t)
 			}
 		}

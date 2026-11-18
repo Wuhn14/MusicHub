@@ -147,3 +147,32 @@ func TestAlbumKeyRoundTrip(t *testing.T) {
 		}
 	}
 }
+
+func TestTracksSearchIgnoresAccentsAndCase(t *testing.T) {
+	st := openStore(t)
+	put(t, st, store.File{Path: "/m/1.mp3", Status: store.FilePending, Tags: media.Tags{Title: "Intro", Artist: "Étienne Daho", Album: "X"}})
+	put(t, st, store.File{Path: "/m/2.mp3", Status: store.FilePending, Tags: media.Tags{Title: "Halo", Artist: "Beyoncé", Album: "Y"}})
+	q := NewQuery(st)
+	for query, want := range map[string]string{"etienne": "Intro", "ÉTIENNE": "Intro", "BEYONCE": "Halo", "beyoncé": "Halo"} {
+		got, err := q.Tracks(context.Background(), "", query)
+		if err != nil || len(got) != 1 || got[0].Title != want {
+			t.Errorf("Tracks(%q) = %+v, %v", query, got, err)
+		}
+	}
+}
+
+func TestTaggedAlbumYearIsMostCommon(t *testing.T) {
+	st := openStore(t)
+	for i, d := range []string{"", "2005", "2004", "2004", "2005"} {
+		put(t, st, store.File{Path: "/m/" + string(rune('a'+i)) + ".mp3", Status: store.FilePending,
+			Tags: media.Tags{Title: "T", Artist: "A", Album: "Al", Date: d}})
+	}
+	albums, _ := NewQuery(st).Albums(context.Background(), "")
+	if len(albums) != 1 || albums[0].Year != "2004" { // 2004 and 2005 tie: earliest wins
+		t.Fatalf("albums = %+v", albums)
+	}
+	_, tracks, _ := NewQuery(st).Album(context.Background(), albums[0].Key)
+	if tracks[0].Year != "2004" {
+		t.Errorf("track year = %q", tracks[0].Year)
+	}
+}

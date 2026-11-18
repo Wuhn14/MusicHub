@@ -17,7 +17,8 @@ test('library page shows tabs, an empty state and the scan button', async ({ pag
   await expect(page).toHaveURL(/tab=tracks/);
 
   await page.getByRole('button', { name: 'Analyser maintenant' }).click();
-  await expect(page.getByRole('button', { name: /Analyser maintenant|Analyse en cours/ })).toBeVisible();
+  // The button must come back to its idle, enabled state (no stuck spinner).
+  await expect(page.getByRole('button', { name: 'Analyser maintenant' })).toBeEnabled({ timeout: 15_000 });
   await expect(page.getByText(/Dernière analyse : \d+ fichiers?/)).toBeVisible();
 });
 
