@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { errorMessage, getArtist, isAbort, type ArtistPage } from '../lib/api';
+  import { errorMessage, getArtist, getArtistAvailability, isAbort, type AlbumSummary, type ArtistPage } from '../lib/api';
   import { groupDiscography } from '../lib/discography';
   import { countryName } from '../lib/format';
   import AlbumGrid from '../components/AlbumGrid.svelte';
@@ -14,12 +14,21 @@
   let page = $state<ArtistPage | null>(null);
   let loading = $state(true);
   let error = $state('');
+  /** Album id → number of its tracks the library can play. */
+  let owned = $state<Record<string, number>>({});
 
   $effect(() => {
     const controller = new AbortController();
     page = null;
     error = '';
     loading = true;
+    owned = {};
+    // A failure only hides the badges.
+    getArtistAvailability(id, controller.signal)
+      .then((res) => {
+        owned = res.albums;
+      })
+      .catch(() => {});
     getArtist(id, controller.signal)
       .then((res) => {
         page = res;
@@ -51,6 +60,10 @@
       .join(' · ');
   });
 
+  function badgeFor(album: AlbumSummary): string {
+    return (owned[album.id] ?? 0) > 0 ? 'Dans ta bibliothèque' : '';
+  }
+
   function initial(name: string): string {
     return name.trim().charAt(0).toUpperCase() || '?';
   }
@@ -77,7 +90,7 @@
   {#each groups as group (group.label)}
     <section aria-label={group.label}>
       <h2>{group.label}</h2>
-      <AlbumGrid albums={group.albums} showArtist={false} />
+      <AlbumGrid albums={group.albums} showArtist={false} {badgeFor} />
     </section>
   {/each}
 {:else}

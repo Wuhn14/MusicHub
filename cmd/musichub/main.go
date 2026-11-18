@@ -14,9 +14,11 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/Wuhn14/MusicHub/internal/acoustid"
 	"github.com/Wuhn14/MusicHub/internal/catalog"
 	"github.com/Wuhn14/MusicHub/internal/catalog/musicbrainz"
 	"github.com/Wuhn14/MusicHub/internal/config"
+	"github.com/Wuhn14/MusicHub/internal/identify"
 	"github.com/Wuhn14/MusicHub/internal/library"
 	"github.com/Wuhn14/MusicHub/internal/media"
 	"github.com/Wuhn14/MusicHub/internal/server"
@@ -65,6 +67,20 @@ func run() error {
 	tools := media.New(cfg.FFmpeg, cfg.FFprobe, cfg.FPcalc)
 	settingsSvc := settings.New(st)
 	scanner := library.NewScanner(st, tools, cfg.MusicDir, time.Now)
+
+	// Identification runs in the background from a persistent job queue;
+	// the scanner queues every new or modified pending file.
+	identifier := identify.New(identify.Deps{
+		Store: st, Tools: tools, AcoustID: acoustid.New(cfg.AcoustIDURL, 333*time.Millisecond),
+		MB: mb, Catalog: cat, Settings: settingsSvc, Now: time.Now,
+	})
+	worker := identify.NewWorker(identifier, st)
+	scanner.OnFileAdded = func(f store.File) { worker.Enqueue(f.ID) }
+	workerDone := make(chan struct{})
+	go func() { defer close(workerDone); worker.Run(ctx) }()
+	// Like the runner below: stop before the database is closed.
+	defer func() { stop(); <-workerDone }()
+
 	runner := library.NewRunner(scanner, func() time.Duration {
 		s, err := settingsSvc.Get(ctx)
 		if err != nil || s.ScanInterval <= 0 {
@@ -86,9 +102,14 @@ func run() error {
 		return s.MaxTranscodes
 	})
 
+	api := web.NewAPI(web.Deps{
+		Catalog: cat, Covers: covers, Settings: settingsSvc, Tools: tools,
+		Library: library.Service{Query: library.NewQuery(st), Runner: runner}, Stream: streamer,
+		Availability: st, Identify: worker,
+	})
 	srv := &http.Server{
 		Addr:              fmt.Sprintf(":%d", cfg.Port),
-		Handler:           server.New(web.NewAPI(web.Deps{Catalog: cat, Covers: covers, Settings: settingsSvc, Tools: tools, Library: library.Service{Query: library.NewQuery(st), Runner: runner}, Stream: streamer}), web.NewUI()),
+		Handler:           server.New(api, web.NewUI()),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       120 * time.Second,
 		BaseContext:       func(net.Listener) context.Context { return ctx },

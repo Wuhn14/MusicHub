@@ -50,7 +50,9 @@ type Deps struct {
 	Tools    ToolStatusReader
 	Library  LibraryReader
 	// Stream serves GET /api/stream/{fileId}; it reads the path value itself.
-	Stream http.Handler
+	Stream       http.Handler
+	Availability AvailabilityReader
+	Identify     IdentifyStatusReader
 }
 
 type api struct {
@@ -59,11 +61,14 @@ type api struct {
 	settings SettingsService
 	tools    ToolStatusReader
 	lib      LibraryReader
+	avail    AvailabilityReader
+	identify IdentifyStatusReader
 }
 
 // NewAPI returns the handler serving every /api route.
 func NewAPI(d Deps) http.Handler {
-	a := &api{cat: d.Catalog, covers: d.Covers, settings: d.Settings, tools: d.Tools, lib: d.Library}
+	a := &api{cat: d.Catalog, covers: d.Covers, settings: d.Settings, tools: d.Tools, lib: d.Library,
+		avail: d.Availability, identify: d.Identify}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/search", requires(d.Catalog != nil, a.search))
 	mux.HandleFunc("GET /api/artists/{id}", requires(d.Catalog != nil, a.artist))
@@ -78,6 +83,8 @@ func NewAPI(d Deps) http.Handler {
 	mux.HandleFunc("GET /api/library/tracks", requires(d.Library != nil, a.libTracks))
 	mux.HandleFunc("GET /api/library/status", requires(d.Library != nil, a.libStatus))
 	mux.HandleFunc("POST /api/library/scan", requires(d.Library != nil, a.libScan))
+	mux.HandleFunc("GET /api/library/availability", requires(d.Availability != nil, a.availability))
+	mux.HandleFunc("GET /api/identify/status", requires(d.Identify != nil, a.identifyStatus))
 	mux.HandleFunc("GET /api/stream/{fileId}", requires(d.Stream != nil, func(w http.ResponseWriter, r *http.Request) {
 		d.Stream.ServeHTTP(w, r)
 	}))

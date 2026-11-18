@@ -162,7 +162,7 @@ func (a *api) libStatus(w http.ResponseWriter, _ *http.Request) {
 	st := a.lib.Status()
 	lastRun := ""
 	if !st.LastRun.IsZero() {
-		lastRun = st.LastRun.UTC().Format(time.RFC3339)
+		lastRun = st.LastRun.UTC().Format(time.RFC3339Nano)
 	}
 	rep := st.LastReport
 	writeJSON(w, http.StatusOK, struct {

@@ -134,6 +134,9 @@
   let pollTick = $state(0);
   // How many polls were spent waiting for a requested scan to start.
   let waitTicks = $state(0);
+  // lastRun when the scan was requested: a different value means the
+  // requested scan already ran (an empty folder scans in a few ms).
+  let lastRunBefore = '';
 
   $effect(() => {
     void pollTick;
@@ -146,13 +149,13 @@
         if (s.running) {
           waiting = false;
           timer = setTimeout(() => (pollTick += 1), 2000);
-        } else if (waiting && waitTicks < 4) {
+        } else if (waiting && s.lastRun === lastRunBefore && waitTicks < 4) {
           // The scan was requested but has not started yet.
           waitTicks += 1;
           timer = setTimeout(() => (pollTick += 1), 2000);
         } else {
+          if (wasRunning || (waiting && s.lastRun !== lastRunBefore)) reloadCount += 1;
           waiting = false;
-          if (wasRunning) reloadCount += 1;
         }
       })
       .catch((err: unknown) => {
@@ -166,6 +169,7 @@
 
   async function scanNow(): Promise<void> {
     scanError = '';
+    lastRunBefore = scan?.lastRun ?? '';
     try {
       await startScan();
       waiting = true;

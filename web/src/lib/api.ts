@@ -128,6 +128,24 @@ export function getAlbum(id: string, signal?: AbortSignal): Promise<Album> {
   return getJSON(`/api/albums/${encodeURIComponent(id)}`, signal);
 }
 
+/** Recordings of a catalog album that the library can play: recording id → file id. */
+export interface AlbumAvailability {
+  tracks: Record<string, string>;
+}
+
+/** Albums of a catalog artist with something playable: album id → available track count. */
+export interface ArtistAvailability {
+  albums: Record<string, number>;
+}
+
+export function getAlbumAvailability(id: string, signal?: AbortSignal): Promise<AlbumAvailability> {
+  return getJSON(`/api/library/availability?album=${encodeURIComponent(id)}`, signal);
+}
+
+export function getArtistAvailability(id: string, signal?: AbortSignal): Promise<ArtistAvailability> {
+  return getJSON(`/api/library/availability?artist=${encodeURIComponent(id)}`, signal);
+}
+
 export function coverUrl(albumId: string, size: 250 | 500): string {
   return `/api/covers/${encodeURIComponent(albumId)}?size=${size}`;
 }

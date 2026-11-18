@@ -50,8 +50,9 @@ type File struct {
 
 // FileFilter narrows ListFiles. Empty fields match everything.
 type FileFilter struct {
-	Status string
-	Path   string
+	Status      string
+	Path        string
+	RecordingID string
 }
 
 const fileCols = `id, path, origin, size, mtime, format, codec, bitrate, sample_rate,
@@ -214,6 +215,10 @@ func (s *Store) ListFiles(ctx context.Context, flt FileFilter) ([]File, error) {
 		where = append(where, "path = ?")
 		args = append(args, flt.Path)
 	}
+	if flt.RecordingID != "" {
+		where = append(where, "recording_id = ?")
+		args = append(args, flt.RecordingID)
+	}
 	if len(where) > 0 {
 		q += " WHERE " + strings.Join(where, " AND ")
 	}
@@ -289,4 +294,88 @@ DELETE FROM files WHERE status = 'missing' AND missing_since <> '' AND missing_s
 	}
 	n, err := res.RowsAffected()
 	return int(n), err
+}
+
+// LinkFile marks a file as identified: it is the given recording, at the
+// given disc and position of the album (a release group; empty when the
+// recording belongs to none). Its identification candidates are dropped.
+func (s *Store) LinkFile(ctx context.Context, id, recordingID, albumID string, disc, position int) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	res, err := tx.ExecContext(ctx, `
+UPDATE files SET status = 'identified', recording_id = ?, album_id = ?, disc = ?, position = ?
+WHERE id = ?`, recordingID, albumID, disc, position, id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM identification_candidates WHERE file_id = ?`, id); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// DeleteFile removes a file row with its jobs and candidates. It does not
+// touch the disk. Deleting an unknown file is not an error.
+func (s *Store) DeleteFile(ctx context.Context, id string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM files WHERE id = ?`, id)
+	return err
+}
+
+// AlbumAvailability maps the recordings of an album that the library can
+// play to one identified file each. A recording counts when a file is linked
+// to it on this album, or on another album while the recording is in this
+// album's track list. Files linked to this album are preferred.
+func (s *Store) AlbumAvailability(ctx context.Context, albumID string) (map[string]string, error) {
+	rows, err := s.db.QueryContext(ctx, `
+SELECT recording_id, id FROM files
+WHERE status = 'identified' AND recording_id <> ''
+  AND (album_id = ? OR recording_id IN (SELECT recording_id FROM album_tracks WHERE album_id = ?))
+ORDER BY CASE WHEN album_id = ? THEN 0 ELSE 1 END, lossless DESC, bitrate DESC, id`, albumID, albumID, albumID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]string{}
+	for rows.Next() {
+		var rec, id string
+		if err := rows.Scan(&rec, &id); err != nil {
+			return nil, err
+		}
+		if _, ok := out[rec]; !ok {
+			out[rec] = id
+		}
+	}
+	return out, rows.Err()
+}
+
+// ArtistAvailability counts, for each known album of the artist, how many of
+// its recordings the library can play (same rule as AlbumAvailability).
+// Albums with nothing available are left out.
+func (s *Store) ArtistAvailability(ctx context.Context, artistID string) (map[string]int, error) {
+	rows, err := s.db.QueryContext(ctx, `
+SELECT al.id, COUNT(DISTINCT f.recording_id) FROM albums al
+JOIN files f ON f.status = 'identified' AND f.recording_id <> ''
+  AND (f.album_id = al.id OR f.recording_id IN (SELECT t.recording_id FROM album_tracks t WHERE t.album_id = al.id))
+WHERE al.artist_id = ?
+GROUP BY al.id`, artistID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]int{}
+	for rows.Next() {
+		var id string
+		var n int
+		if err := rows.Scan(&id, &n); err != nil {
+			return nil, err
+		}
+		out[id] = n
+	}
+	return out, rows.Err()
 }

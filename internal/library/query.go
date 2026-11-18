@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Wuhn14/MusicHub/internal/store"
+	"github.com/Wuhn14/MusicHub/internal/textfold"
 )
 
 // ErrNotFound is returned when an album key matches nothing in the library.
@@ -91,30 +92,8 @@ func decodeKey(key string) (string, error) {
 
 func norm(s string) string { return strings.ToLower(strings.TrimSpace(s)) }
 
-// foldTable maps accented Latin letters to their base letters (lower case).
-var foldTable = func() map[rune]rune {
-	m := map[rune]rune{}
-	for base, accented := range map[rune]string{
-		'a': "àáâãäåāăą", 'c': "çćĉċč", 'd': "ďđ", 'e': "èéêëēĕėęě", 'g': "ĝğġģ", 'h': "ĥħ",
-		'i': "ìíîïĩīĭįı", 'j': "ĵ", 'k': "ķ", 'l': "ĺļľŀł", 'n': "ñńņňŉ", 'o': "òóôõöøōŏő",
-		'r': "ŕŗř", 's': "śŝşšß", 't': "ţťŧ", 'u': "ùúûüũūŭůűų", 'w': "ŵ", 'y': "ýÿŷ", 'z': "źżž",
-	} {
-		for _, r := range accented {
-			m[r] = base
-		}
-	}
-	return m
-}()
-
 // fold lower-cases s, trims it and strips accents, so searches ignore both.
-func fold(s string) string {
-	return strings.Map(func(r rune) rune {
-		if b, ok := foldTable[r]; ok {
-			return b
-		}
-		return r
-	}, norm(s))
-}
+func fold(s string) string { return textfold.Fold(s) }
 
 func yearFromDate(d string) string {
 	d = strings.TrimSpace(d)

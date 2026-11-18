@@ -10,9 +10,11 @@
     coverFor?: (album: AlbumSummary) => string;
     /** When set, every card gets a play button calling it. */
     onplay?: (album: AlbumSummary) => void;
+    /** Optional short label shown on a card (empty for none). */
+    badgeFor?: (album: AlbumSummary) => string;
   }
 
-  let { albums, showArtist = true, hrefFor, coverFor, onplay }: Props = $props();
+  let { albums, showArtist = true, hrefFor, coverFor, onplay, badgeFor }: Props = $props();
 </script>
 
 <ul class="grid">
@@ -23,6 +25,7 @@
       href={hrefFor?.(album)}
       coverId={coverFor?.(album)}
       onplay={onplay ? () => onplay(album) : undefined}
+      badge={badgeFor?.(album)}
     />
   {/each}
 </ul>
