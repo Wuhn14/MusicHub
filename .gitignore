@@ -11,26 +11,37 @@ Thumbs.db
 !.env.example
 
 # Local data (music, database, cache)
-data/
-music/
+/data/
+/music/
 *.db
 *.sqlite
-cache/
-logs/
+/cache/
+/logs/
 *.log
 
 # Build artifacts / dependencies
 node_modules/
-dist/
-build/
+/dist/
+/build/
 __pycache__/
 *.pyc
 .venv/
-bin/
-tmp/
+/bin/
+/tmp/
 
 # Local archives, keys and tooling
 *.zip
 *.pem
 *.key
 .claude/
+
+# Go / generated UI
+internal/web/dist/*
+!internal/web/dist/.gitkeep
+/musichub
+/musichub.exe
+
+# Playwright
+web/test-results/
+web/playwright-report/
+web/blob-report/

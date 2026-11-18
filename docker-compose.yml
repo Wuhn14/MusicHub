@@ -1,8 +1,21 @@
 services:
   musichub:
     build: .
-    container_name: musichub
     restart: unless-stopped
     ports:
-      - "8090:8080"   # change 8090 si ce port est déjà pris sur ton NAS
-    env_file: .env
+      - "8090:8080"
+    environment:
+      # Optional settings (see .env.example for the full list):
+      # MUSICHUB_MB_URL: https://musicbrainz.org/ws/2
+      # MUSICHUB_CAA_URL: https://coverartarchive.org
+      MUSICHUB_DATA: /data
+      MUSICHUB_MUSIC: /music
+    volumes:
+      # Internal database and cover cache. A named volume avoids host
+      # permission issues with the non-root user of the image.
+      - musichub-data:/data
+      # Your music folder (not used yet at this step).
+      - ./music:/music
+
+volumes:
+  musichub-data:
