@@ -8,8 +8,10 @@
 //
 // Fixtures: the small JSON files in testdata/ are embedded; the artist
 // ArtistMany has ManyAlbums generated release groups to exercise
-// pagination. Server also counts requests, records them (path, query,
-// User-Agent, arrival time) and can answer 503 a given number of times.
+// pagination, and ArtistHuge has HugeAlbums of them to exercise the page cap.
+// ArtistLumen has a single release group, AlbumTwoDisc. Server also counts
+// requests, records them (path, query, User-Agent, arrival time) and can
+// answer an error status a given number of times.
 // It is shared by the catalog service tests and by the cmd/fakemb
 // development binary.
 package mbtest
@@ -32,10 +34,14 @@ var fixtures embed.FS
 
 // Identifiers of the invented fixture data.
 const (
-	// ArtistLumen is an artist with a lookup fixture and no release groups.
+	// ArtistLumen is an artist with a lookup fixture and one release group,
+	// AlbumTwoDisc.
 	ArtistLumen = "00000000-0000-4000-8000-0000000000a1"
 	// ArtistMany has ManyAlbums generated release groups.
 	ArtistMany = "00000000-0000-4000-8000-0000000000a2"
+	// ArtistHuge has HugeAlbums generated release groups, more than the client
+	// is willing to browse.
+	ArtistHuge = "00000000-0000-4000-8000-0000000000a3"
 	// AlbumTwoDisc is a release group with five releases; its reference
 	// release is ReleaseReference (official, earliest, two discs, three
 	// tracks).
@@ -43,6 +49,8 @@ const (
 	ReleaseReference = "00000000-0000-4000-8000-0000000000c1"
 	// ManyAlbums is the number of release groups of ArtistMany.
 	ManyAlbums = 230
+	// HugeAlbums is the number of release groups of ArtistHuge.
+	HugeAlbums = 700
 )
 
 // Request describes one request received by the fake.
@@ -60,6 +68,7 @@ type Server struct {
 	mu       sync.Mutex
 	reqs     []Request
 	failNext int
+	failCode int
 }
 
 // New starts a fake server. The caller must Close it.
@@ -78,8 +87,14 @@ func (s *Server) Requests() int {
 
 // FailNext makes the next n requests answer 503.
 func (s *Server) FailNext(n int) {
+	s.FailNextWith(http.StatusServiceUnavailable, n)
+}
+
+// FailNextWith makes the next n requests answer the given status code.
+func (s *Server) FailNextWith(status, n int) {
 	s.mu.Lock()
 	s.failNext = n
+	s.failCode = status
 	s.mu.Unlock()
 }
 
@@ -119,13 +134,13 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	s.mu.Lock()
 	s.reqs = append(s.reqs, Request{Path: r.URL.Path, Query: q, UserAgent: r.UserAgent(), At: time.Now()})
-	fail := s.failNext > 0
+	fail, code := s.failNext > 0, s.failCode
 	if fail {
 		s.failNext--
 	}
 	s.mu.Unlock()
 	if fail {
-		http.Error(w, `{"error":"busy"}`, http.StatusServiceUnavailable)
+		http.Error(w, `{"error":"busy"}`, code)
 		return
 	}
 
@@ -146,6 +161,8 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 		notFound(w)
 	case kind == "artist" && id == ArtistMany:
 		writeJSON(w, map[string]any{"id": ArtistMany, "name": "Many Albums Ensemble", "sort-name": "Ensemble, Many Albums"})
+	case kind == "artist" && id == ArtistHuge:
+		writeJSON(w, map[string]any{"id": ArtistHuge, "name": "Huge Catalogue Orchestra", "sort-name": "Orchestra, Huge Catalogue"})
 	case kind == "artist" || kind == "release-group" || kind == "release":
 		serveFile(w, kind+"_"+id+".json")
 	default:
@@ -175,8 +192,18 @@ func serveFile(w http.ResponseWriter, name string) {
 
 func browseReleaseGroups(w http.ResponseWriter, q url.Values) {
 	total := 0
-	if q.Get("artist") == ArtistMany {
+	switch q.Get("artist") {
+	case ArtistMany:
 		total = ManyAlbums
+	case ArtistHuge:
+		total = HugeAlbums
+	case ArtistLumen:
+		// Browse results carry no secondary types here, so the album lands in
+		// the "Albums" group of the artist page.
+		writeJSON(w, map[string]any{"release-group-count": 1, "release-group-offset": 0, "release-groups": []map[string]any{{
+			"id": AlbumTwoDisc, "title": "Paper Lanterns", "primary-type": "Album", "first-release-date": "2003-05-12",
+		}}})
+		return
 	}
 	limit, _ := strconv.Atoi(q.Get("limit"))
 	if limit <= 0 || limit > 100 {

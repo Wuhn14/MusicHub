@@ -3,6 +3,7 @@ package musicbrainz
 import (
 	"context"
 	"errors"
+	"net/http"
 	"sync"
 	"testing"
 	"time"
@@ -107,6 +108,40 @@ func TestRetriesOn503(t *testing.T) {
 	}
 }
 
+func TestRetriesOnServerErrorsAndRateLimit(t *testing.T) {
+	for _, status := range []int{http.StatusBadGateway, http.StatusTooManyRequests} {
+		c, srv := newTestClient(t, 0)
+		srv.FailNextWith(status, 1)
+		if _, err := c.SearchArtists(context.Background(), "lumen", 5); err != nil {
+			t.Fatalf("after one %d: %v", status, err)
+		}
+		if got := srv.Requests(); got != 2 {
+			t.Errorf("%d: requests = %d, want 2", status, got)
+		}
+	}
+
+	c, srv := newTestClient(t, 0)
+	srv.FailNextWith(http.StatusGatewayTimeout, 4)
+	_, err := c.SearchArtists(context.Background(), "lumen", 5)
+	if !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("err = %v, want ErrUnavailable", err)
+	}
+	if got := srv.Requests(); got != 4 {
+		t.Errorf("requests = %d, want 4 (1 try + 3 retries)", got)
+	}
+}
+
+func TestNotFoundIsNotRetried(t *testing.T) {
+	c, srv := newTestClient(t, 0)
+	_, _, err := c.GetArtist(context.Background(), "00000000-0000-4000-8000-00000000ffff")
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("err = %v, want ErrNotFound", err)
+	}
+	if got := srv.Requests(); got != 1 {
+		t.Errorf("requests = %d, want exactly 1", got)
+	}
+}
+
 func TestRetryWaitHonoursContext(t *testing.T) {
 	c, srv := newTestClient(t, 0)
 	c.retryBase = time.Hour
@@ -190,6 +225,23 @@ func TestGetArtistPaginates(t *testing.T) {
 	}
 	if got := srv.Requests(); got != 4 { // lookup + 3 pages
 		t.Errorf("requests = %d, want 4", got)
+	}
+}
+
+func TestGetArtistCapsPages(t *testing.T) {
+	c, srv := newTestClient(t, 0)
+	_, albums, err := c.GetArtist(context.Background(), mbtest.ArtistHuge)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := maxArtistPages * pageSize; len(albums) != want {
+		t.Fatalf("got %d albums, want %d", len(albums), want)
+	}
+	if got := srv.Requests(); got != 1+maxArtistPages {
+		t.Errorf("requests = %d, want %d (lookup + capped pages)", got, 1+maxArtistPages)
+	}
+	if got := srv.Last().Query.Get("type"); got != "album|ep|single" {
+		t.Errorf("browse type = %q, want album|ep|single", got)
 	}
 }
 

@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"sort"
@@ -31,6 +32,10 @@ var (
 const (
 	maxRetries = 3
 	pageSize   = 100
+	// maxArtistPages caps the browsing of an artist's release groups, so an
+	// artist with a huge catalogue cannot turn one page view into dozens of
+	// rate-limited requests.
+	maxArtistPages = 5
 )
 
 // TrackHit is a recording found by SearchTracks, with the album it appears on.
@@ -120,8 +125,8 @@ func (c *Client) get(ctx context.Context, path string, params url.Values, out an
 	}
 }
 
-// do performs one request. The bool tells whether the failure is a 503 that
-// should be retried.
+// do performs one request. The bool tells whether the failure is a server
+// error (5xx) or a 429 that should be retried.
 func (c *Client) do(ctx context.Context, u string, out any) (bool, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
@@ -138,7 +143,7 @@ func (c *Client) do(ctx context.Context, u string, out any) (bool, error) {
 	}
 	defer resp.Body.Close()
 	switch {
-	case resp.StatusCode == http.StatusServiceUnavailable:
+	case resp.StatusCode >= 500 || resp.StatusCode == http.StatusTooManyRequests:
 		_, _ = io.Copy(io.Discard, resp.Body)
 		return true, ErrUnavailable
 	case resp.StatusCode == http.StatusNotFound:
@@ -273,11 +278,11 @@ func (c *Client) SearchTracks(ctx context.Context, q string, limit int) ([]Track
 					ID    string `json:"id"`
 					Title string `json:"title"`
 				} `json:"release-group"`
+				// In a recording search the medium lists only the matching
+				// track; track-offset is its zero-based index on the medium.
 				Media []struct {
-					Position int `json:"position"`
-					Track    []struct {
-						Position int `json:"position"`
-					} `json:"track"`
+					Position    int  `json:"position"`
+					TrackOffset *int `json:"track-offset"`
 				} `json:"media"`
 			} `json:"releases"`
 		} `json:"recordings"`
@@ -294,11 +299,9 @@ func (c *Client) SearchTracks(ctx context.Context, q string, limit int) ([]Track
 		if len(r.Releases) > 0 {
 			rel := r.Releases[0]
 			h.AlbumID, h.AlbumTitle = rel.ReleaseGroup.ID, rel.ReleaseGroup.Title
-			if len(rel.Media) > 0 {
+			if len(rel.Media) > 0 && rel.Media[0].TrackOffset != nil {
 				h.Disc = rel.Media[0].Position
-				if len(rel.Media[0].Track) > 0 {
-					h.Position = rel.Media[0].Track[0].Position
-				}
+				h.Position = *rel.Media[0].TrackOffset + 1
 			}
 		}
 		out = append(out, h)
@@ -308,8 +311,9 @@ func (c *Client) SearchTracks(ctx context.Context, q string, limit int) ([]Track
 
 // --- Lookups ---
 
-// GetArtist returns an artist and all of its release groups (without tracks),
-// following the pagination of the browse request.
+// GetArtist returns an artist and its albums, EPs and singles (without
+// tracks), following the pagination of the browse request. At most
+// maxArtistPages pages are read; the rest is dropped and the cut is logged.
 func (c *Client) GetArtist(ctx context.Context, id string) (store.Artist, []store.Album, error) {
 	var ja jsonArtist
 	if err := c.get(ctx, "/artist/"+url.PathEscape(id), nil, &ja); err != nil {
@@ -318,12 +322,12 @@ func (c *Client) GetArtist(ctx context.Context, id string) (store.Artist, []stor
 	artist := ja.store()
 
 	albums := []store.Album{}
-	for offset := 0; ; {
+	for offset, pages := 0, 0; ; {
 		var page struct {
 			Count         int                `json:"release-group-count"`
 			ReleaseGroups []jsonReleaseGroup `json:"release-groups"`
 		}
-		params := url.Values{"artist": {id}, "limit": {strconv.Itoa(pageSize)}, "offset": {strconv.Itoa(offset)}}
+		params := url.Values{"artist": {id}, "type": {"album|ep|single"}, "limit": {strconv.Itoa(pageSize)}, "offset": {strconv.Itoa(offset)}}
 		if err := c.get(ctx, "/release-group", params, &page); err != nil {
 			return store.Artist{}, nil, err
 		}
@@ -333,7 +337,13 @@ func (c *Client) GetArtist(ctx context.Context, id string) (store.Artist, []stor
 			albums = append(albums, al)
 		}
 		offset += len(page.ReleaseGroups)
+		pages++
 		if len(page.ReleaseGroups) == 0 || offset >= page.Count {
+			break
+		}
+		if pages >= maxArtistPages {
+			slog.Info("musicbrainz: artist discography truncated",
+				"artist", id, "kept", offset, "total", page.Count)
 			break
 		}
 	}
