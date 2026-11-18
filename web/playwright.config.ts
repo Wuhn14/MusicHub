@@ -57,6 +57,7 @@ export default defineConfig({
         MUSICHUB_MUSIC: musicDir,
         MUSICHUB_MB_URL: fakeURL,
         MUSICHUB_CAA_URL: fakeURL,
+        MUSICHUB_ACOUSTID_URL: `${fakeURL}/acoustid/v2`,
       },
     },
     {
