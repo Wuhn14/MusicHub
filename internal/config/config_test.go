@@ -17,6 +17,9 @@ func TestLoadDefaults(t *testing.T) {
 		MusicDir:       "./music",
 		MusicBrainzURL: "https://musicbrainz.org/ws/2",
 		CoverArtURL:    "https://coverartarchive.org",
+		FFmpeg:         "ffmpeg",
+		FFprobe:        "ffprobe",
+		FPcalc:         "fpcalc",
 	}
 	if cfg != want {
 		t.Errorf("got %+v, want %+v", cfg, want)
@@ -40,6 +43,9 @@ func TestLoadOverrides(t *testing.T) {
 		MusicDir:       "/music",
 		MusicBrainzURL: "http://localhost:5000/ws/2",
 		CoverArtURL:    "http://localhost:5001",
+		FFmpeg:         "ffmpeg",
+		FFprobe:        "ffprobe",
+		FPcalc:         "fpcalc",
 	}
 	if cfg != want {
 		t.Errorf("got %+v, want %+v", cfg, want)
@@ -51,5 +57,19 @@ func TestLoadRejectsInvalidPort(t *testing.T) {
 		if _, err := Load(env(map[string]string{"MUSICHUB_PORT": port})); err == nil {
 			t.Errorf("port %q: expected an error", port)
 		}
+	}
+}
+
+func TestLoadToolPaths(t *testing.T) {
+	cfg, err := Load(env(map[string]string{
+		"MUSICHUB_FFMPEG":  "/opt/ff/ffmpeg",
+		"MUSICHUB_FFPROBE": "/opt/ff/ffprobe",
+		"MUSICHUB_FPCALC":  "/opt/ff/fpcalc",
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.FFmpeg != "/opt/ff/ffmpeg" || cfg.FFprobe != "/opt/ff/ffprobe" || cfg.FPcalc != "/opt/ff/fpcalc" {
+		t.Errorf("got %q %q %q", cfg.FFmpeg, cfg.FFprobe, cfg.FPcalc)
 	}
 }

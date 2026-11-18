@@ -13,6 +13,11 @@ type Config struct {
 	MusicDir       string
 	MusicBrainzURL string
 	CoverArtURL    string
+	// FFmpeg, FFprobe and FPcalc are the audio tool executables (name looked
+	// up in PATH, or an absolute path).
+	FFmpeg  string
+	FFprobe string
+	FPcalc  string
 }
 
 // Load builds a Config from getenv (typically os.Getenv), applying defaults.
@@ -23,6 +28,9 @@ func Load(getenv func(string) string) (Config, error) {
 		MusicDir:       valueOr(getenv, "MUSICHUB_MUSIC", "./music"),
 		MusicBrainzURL: valueOr(getenv, "MUSICHUB_MB_URL", "https://musicbrainz.org/ws/2"),
 		CoverArtURL:    valueOr(getenv, "MUSICHUB_CAA_URL", "https://coverartarchive.org"),
+		FFmpeg:         valueOr(getenv, "MUSICHUB_FFMPEG", "ffmpeg"),
+		FFprobe:        valueOr(getenv, "MUSICHUB_FFPROBE", "ffprobe"),
+		FPcalc:         valueOr(getenv, "MUSICHUB_FPCALC", "fpcalc"),
 	}
 	if raw := getenv("MUSICHUB_PORT"); raw != "" {
 		port, err := strconv.Atoi(raw)

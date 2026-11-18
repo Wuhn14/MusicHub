@@ -26,7 +26,7 @@ La lecture et les téléchargements arrivent aux étapes suivantes (voir la feui
 
 ## Lancer en local
 
-Il faut Go 1.26 ou plus récent. L'interface web est embarquée dans le binaire : construisez-la d'abord (voir [Développement](#développement)), puis :
+Il faut Go 1.26 ou plus récent, plus **ffmpeg** (avec `ffprobe`) et **fpcalc** (Chromaprint) dans le `PATH` : Windows `winget install Gyan.FFmpeg` et `winget install AcoustID.Chromaprint` ; Debian/Ubuntu `sudo apt install ffmpeg libchromaprint-tools` ; macOS `brew install ffmpeg chromaprint`. L'image Docker les contient déjà. L'interface web est embarquée dans le binaire : construisez-la d'abord (voir [Développement](#développement)), puis :
 
 ```bash
 go run ./cmd/musichub
@@ -42,6 +42,9 @@ MusicHub se configure avec des **variables d'environnement** (il ne lit pas les 
 | `MUSICHUB_MUSIC` | `./music` (`/music` dans Docker) | Dossier de musique (pas encore utilisé) |
 | `MUSICHUB_MB_URL` | `https://musicbrainz.org/ws/2` | API MusicBrainz |
 | `MUSICHUB_CAA_URL` | `https://coverartarchive.org` | Cover Art Archive |
+| `MUSICHUB_FFMPEG` | `ffmpeg` | Exécutable ffmpeg (nom dans le `PATH` ou chemin complet) |
+| `MUSICHUB_FFPROBE` | `ffprobe` | Exécutable ffprobe |
+| `MUSICHUB_FPCALC` | `fpcalc` | Exécutable fpcalc (Chromaprint) |
 
 ```bash
 # bash
