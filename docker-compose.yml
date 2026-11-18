@@ -8,13 +8,19 @@ services:
       # Optional settings (see .env.example for the full list):
       # MUSICHUB_MB_URL: https://musicbrainz.org/ws/2
       # MUSICHUB_CAA_URL: https://coverartarchive.org
+      # MUSICHUB_ACOUSTID_URL: https://api.acoustid.org/v2
+      # The AcoustID key is not set here: enter it in the app's settings.
       MUSICHUB_DATA: /data
       MUSICHUB_MUSIC: /music
     volumes:
-      # Internal database and cover cache. A named volume avoids host
-      # permission issues with the non-root user of the image.
+      # Internal database, caches and incoming uploads (files wait here until
+      # they are identified). A named volume avoids host permission issues
+      # with the non-root user of the image.
       - musichub-data:/data
-      # Your music folder (not used yet at this step).
+      # Your music folder. It is scanned, and uploaded files are moved here
+      # once identified (Artist/Album (year)/NN - Title). Files you drop in it
+      # yourself are never moved or modified unless you enable it in the
+      # settings. The folder must be writable by UID/GID 65532.
       - ./music:/music
 
 volumes:
