@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"os/exec"
 	"strconv"
 	"strings"
 )
@@ -43,6 +44,12 @@ type ffprobeOutput struct {
 		BitRate    string            `json:"bit_rate"`
 		Tags       map[string]string `json:"tags"`
 	} `json:"format"`
+}
+
+// FFprobeAvailable reports whether the ffprobe executable can be found.
+func (t *Tools) FFprobeAvailable() bool {
+	_, err := exec.LookPath(t.ffprobe)
+	return err == nil
 }
 
 // Probe reads the technical properties and tags of an audio file. A file

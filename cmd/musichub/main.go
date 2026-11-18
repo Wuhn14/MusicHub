@@ -71,7 +71,11 @@ func run() error {
 		}
 		return s.ScanInterval
 	})
-	go runner.Run(ctx)
+	runnerDone := make(chan struct{})
+	go func() { defer close(runnerDone); runner.Run(ctx) }()
+	// Deferred after st.Close, so it runs first: the scanner must stop using
+	// the database before it is closed.
+	defer func() { stop(); <-runnerDone }()
 
 	srv := &http.Server{
 		Addr:              fmt.Sprintf(":%d", cfg.Port),

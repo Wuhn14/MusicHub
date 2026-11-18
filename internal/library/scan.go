@@ -36,9 +36,14 @@ type Report struct {
 	Seen       int // audio files found on disk
 	Added      int // new files recorded
 	Updated    int // known files whose size or date changed
-	Unreadable int // files ffprobe could not read during this scan
+	Unreadable int // files that are not readable audio, found during this scan
+	Errors     int // files skipped on a transient probe error, retried next scan
 	Missing    int // files newly flagged as missing
 }
+
+// availabilityChecker is implemented by probers that can tell up front that
+// their executable is missing (*media.Tools does).
+type availabilityChecker interface{ FFprobeAvailable() bool }
 
 // Scanner walks the music folder and records audio files in the store.
 type Scanner struct {
@@ -72,6 +77,10 @@ func (s *Scanner) Scan(ctx context.Context) (Report, error) {
 	}
 	if !info.IsDir() {
 		return rep, fmt.Errorf("le dossier de musique n'est pas un dossier : %s", s.musicDir)
+	}
+
+	if c, ok := s.tools.(availabilityChecker); ok && !c.FFprobeAvailable() {
+		return rep, errors.New("ffprobe est introuvable : l'analyse des fichiers est impossible.")
 	}
 
 	started := s.now()
@@ -117,11 +126,16 @@ func (s *Scanner) Scan(ctx context.Context) (Report, error) {
 			return nil
 		}
 		fi, err := os.Stat(path) // follows a symlinked file
-		if err != nil || fi.IsDir() {
+		if err != nil {
+			slog.Warn("fichier inaccessible pendant le scan", "path", path, "err", err)
+			complete = false
+			return nil
+		}
+		if fi.IsDir() {
 			return nil
 		}
 		rep.Seen++
-		return s.handleFile(ctx, path, fi, started, &rep, &seenUnchanged, flush)
+		return s.handleFile(ctx, path, fi, started, &rep, &complete, &seenUnchanged, flush)
 	})
 	if walkErr != nil {
 		return rep, walkErr
@@ -143,7 +157,7 @@ func (s *Scanner) Scan(ctx context.Context) (Report, error) {
 }
 
 func (s *Scanner) handleFile(ctx context.Context, path string, fi fs.FileInfo, started time.Time,
-	rep *Report, seenUnchanged *[]string, flush func() error) error {
+	rep *Report, complete *bool, seenUnchanged *[]string, flush func() error) error {
 	existing, err := s.st.GetFileByPath(ctx, path)
 	known := err == nil
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
@@ -164,7 +178,12 @@ func (s *Scanner) handleFile(ctx context.Context, path string, fi fs.FileInfo, s
 			return cerr
 		}
 		if !errors.Is(perr, media.ErrNotAudio) {
-			slog.Warn("fichier illisible", "path", path, "err", perr)
+			// Transient (missing tool, timeout, slow disk): record nothing so
+			// the file is retried, and do not flag anything as missing.
+			slog.Warn("analyse impossible, nouvel essai au prochain scan", "path", path, "err", perr)
+			rep.Errors++
+			*complete = false
+			return nil
 		}
 		f.Status = store.FileUnreadable
 		rep.Unreadable++

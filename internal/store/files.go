@@ -89,7 +89,9 @@ func scanFile(r rowScanner) (File, error) {
 	}
 	f.Mtime = time.Unix(0, mtime).UTC()
 	f.Lossless = lossless != 0
-	_ = json.Unmarshal([]byte(tags), &f.Tags)
+	if err := json.Unmarshal([]byte(tags), &f.Tags); err != nil {
+		f.Tags = media.Tags{} // corrupt tags_json: treat as empty
+	}
 	f.LastSeen, f.MissingSince, f.AddedAt = parseTime(lastSeen), parseTime(missing), parseTime(added)
 	return f, nil
 }
@@ -137,24 +139,38 @@ VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		return File{}, err
 	default:
 		newStatus := status
-		switch status {
-		case FileMissing:
+		switch {
+		case f.Status == FileUnreadable:
+			// Whatever it was before, the file no longer reads as audio.
+			// Identification links stay in the row in case it recovers.
+			newStatus = FileUnreadable
+		case status == FileMissing:
 			newStatus = prev
 			if newStatus == "" {
 				newStatus = f.Status
 			}
-		case FileUnreadable:
+		case status == FileUnreadable:
 			newStatus = f.Status
 		}
 		if newStatus == "" {
 			newStatus = FilePending
 		}
-		_, err = tx.ExecContext(ctx, `
+		if f.Status == FileUnreadable {
+			_, err = tx.ExecContext(ctx, `
 UPDATE files SET size=?, mtime=?, format=?, codec=?, bitrate=?, sample_rate=?,
   duration_ms=?, lossless=?, tags_json=?, status=?, prev_status='', last_seen=?, missing_since=''
 WHERE id = ?`,
-			f.Size, f.Mtime.UnixNano(), f.Format, f.Codec, f.BitRate, f.SampleRate,
-			f.DurationMs, f.Lossless, string(tags), newStatus, optTime(f.LastSeen), id)
+				f.Size, f.Mtime.UnixNano(), f.Format, f.Codec, f.BitRate, f.SampleRate,
+				f.DurationMs, f.Lossless, string(tags), newStatus, optTime(f.LastSeen), id)
+		} else {
+			_, err = tx.ExecContext(ctx, `
+UPDATE files SET size=?, mtime=?, format=?, codec=?, bitrate=?, sample_rate=?,
+  duration_ms=?, lossless=?, tags_json=?, disc=?, position=?, status=?, prev_status='',
+  last_seen=?, missing_since=''
+WHERE id = ?`,
+				f.Size, f.Mtime.UnixNano(), f.Format, f.Codec, f.BitRate, f.SampleRate,
+				f.DurationMs, f.Lossless, string(tags), f.Disc, f.Position, newStatus, optTime(f.LastSeen), id)
+		}
 		f.ID = id
 	}
 	if err != nil {

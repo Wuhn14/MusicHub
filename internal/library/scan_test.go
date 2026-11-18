@@ -118,10 +118,9 @@ func TestScanMarksUnreadableAndContinues(t *testing.T) {
 	dir := t.TempDir()
 	tools := realTools(t)
 	os.WriteFile(filepath.Join(dir, "fake.mp3"), []byte("this is just text, not audio"), 0o644)
-	good := mediatest.Sine(t, dir, "good.mp3", 2, nil)
+	mediatest.Sine(t, dir, "good.mp3", 2, nil)
 	flac := mediatest.Sine(t, t.TempDir(), "x.flac", 2, nil)
 	// A truncated real file.
-	_ = good
 	data, _ := os.ReadFile(flac)
 	os.WriteFile(filepath.Join(dir, "trunc.flac"), data[:40], 0o644)
 
