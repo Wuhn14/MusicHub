@@ -60,7 +60,7 @@ docker compose up -d --build
 # http://localhost:8090
 ```
 
-The internal database and cover cache live in the named volume `musichub-data`; your music folder is mounted from `./music`. The container runs as a non-root user. `GET /healthz` returns `ok` when the server is up, which you can use for monitoring.
+The internal database and cover cache live in the named volume `musichub-data`; your music folder is mounted from `./music`. The container runs as a non-root user. `GET /healthz` returns HTTP 200 with `{"ok":true}` when the server is up, which you can use for monitoring.
 
 MusicHub has **no authentication yet**: run it on a trusted network or behind a reverse proxy that handles access control.
 

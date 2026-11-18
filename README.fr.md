@@ -60,7 +60,7 @@ docker compose up -d --build
 # http://localhost:8090
 ```
 
-La base de données interne et le cache des pochettes sont dans le volume nommé `musichub-data` ; votre dossier de musique est monté depuis `./music`. Le conteneur s'exécute en utilisateur non root. `GET /healthz` répond `ok` quand le serveur tourne, ce qui sert à la supervision.
+La base de données interne et le cache des pochettes sont dans le volume nommé `musichub-data` ; votre dossier de musique est monté depuis `./music`. Le conteneur s'exécute en utilisateur non root. `GET /healthz` répond 200 avec `{"ok":true}` quand le serveur tourne, ce qui sert à la supervision.
 
 MusicHub n'a **pas encore d'authentification** : utilisez-le sur un réseau de confiance ou derrière un reverse proxy qui gère les accès.
 
