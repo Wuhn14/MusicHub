@@ -88,6 +88,39 @@ func TestMarkMissingSkipsUploadsUnderIncoming(t *testing.T) {
 	}
 }
 
+func TestMarkMissingSkipsExcludedPaths(t *testing.T) {
+	s := openTemp(t)
+	ctx := context.Background()
+	t0 := time.Date(2026, 3, 1, 10, 0, 0, 0, time.UTC)
+	sep := string(filepath.Separator)
+	music := sep + "music"
+	locked := filepath.Join(music, "locked")
+	add := func(path string) File {
+		f, err := s.UpsertScannedFile(ctx, File{Path: path, Status: FilePending, LastSeen: t0})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return f
+	}
+	inLocked := add(filepath.Join(locked, "deep", "a.mp3"))
+	lookalike := add(filepath.Join(music, "locked-not", "b.mp3"))
+	lockedFile := add(filepath.Join(music, "c.mp3"))
+	gone := add(filepath.Join(music, "d.mp3"))
+	later := t0.Add(time.Hour)
+	n, err := s.MarkMissing(ctx, later, later, "", locked+sep, lockedFile.Path)
+	if err != nil || n != 2 {
+		t.Fatalf("MarkMissing = %d, %v; want 2", n, err)
+	}
+	for _, tc := range []struct {
+		f    File
+		want string
+	}{{inLocked, FilePending}, {lockedFile, FilePending}, {lookalike, FileMissing}, {gone, FileMissing}} {
+		if g, _ := s.GetFile(ctx, tc.f.ID); g.Status != tc.want {
+			t.Errorf("%s = %s, want %s", tc.f.Path, g.Status, tc.want)
+		}
+	}
+}
+
 func TestSetFilePathAndFinishPlacing(t *testing.T) {
 	s := openTemp(t)
 	ctx := context.Background()

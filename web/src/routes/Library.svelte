@@ -192,6 +192,7 @@
     let text = plural(r.seen, 'fichier', 'fichiers');
     if (r.unreadable > 0) text += `, ${plural(r.unreadable, 'illisible', 'illisibles')}`;
     if (r.missing > 0) text += `, ${plural(r.missing, 'disparu', 'disparus')}`;
+    if (r.skipped > 0) text += `, ${plural(r.skipped, 'élément ignoré', 'éléments ignorés')} (droits insuffisants)`;
     return text;
   });
 

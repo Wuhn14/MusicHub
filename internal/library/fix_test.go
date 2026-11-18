@@ -79,7 +79,9 @@ func TestTransientProbeErrorIsRetried(t *testing.T) {
 	}
 }
 
-func TestTransientErrorDoesNotMarkMissing(t *testing.T) {
+// A transient probe error shields its own file from the missing detection,
+// but files that really vanished are still flagged.
+func TestTransientErrorDoesNotMarkItsFileMissing(t *testing.T) {
 	dir := t.TempDir()
 	a := filepath.Join(dir, "a.mp3")
 	b := filepath.Join(dir, "b.mp3")
@@ -96,11 +98,11 @@ func TestTransientErrorDoesNotMarkMissing(t *testing.T) {
 	p.fn = func(string) (media.Probe, error) { return media.Probe{}, errors.New("timeout") }
 	clk.t = clk.t.Add(time.Hour)
 	rep, _ := sc.Scan(ctx)
-	if rep.Missing != 0 || rep.Errors != 1 {
+	if rep.Missing != 1 || rep.Errors != 1 {
 		t.Errorf("report = %+v", rep)
 	}
-	if m, _ := st.ListFiles(ctx, store.FileFilter{Status: store.FileMissing}); len(m) != 0 {
-		t.Errorf("missing = %+v", m)
+	if m, _ := st.ListFiles(ctx, store.FileFilter{Status: store.FileMissing}); len(m) != 1 || m[0].Path != a {
+		t.Errorf("missing = %+v, want only %s", m, a)
 	}
 }
 

@@ -2,8 +2,11 @@ package library
 
 import (
 	"context"
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -282,5 +285,182 @@ func TestRunnerRecordsError(t *testing.T) {
 			t.Fatal("no error recorded")
 		}
 		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// walkFailing walks like filepath.WalkDir, except that reading the folder
+// bad fails with err, as WalkDir reports a folder it cannot list.
+func walkFailing(bad string, err error) func(string, fs.WalkDirFunc) error {
+	return func(root string, fn fs.WalkDirFunc) error {
+		return filepath.WalkDir(root, func(path string, d fs.DirEntry, werr error) error {
+			if werr == nil && path == bad && d.IsDir() {
+				if r := fn(path, d, nil); r != nil {
+					return r
+				}
+				return fn(path, d, err)
+			}
+			return fn(path, d, werr)
+		})
+	}
+}
+
+func TestScanUnreadableFolderOnlyShieldsItself(t *testing.T) {
+	dir := t.TempDir()
+	locked := filepath.Join(dir, "locked")
+	os.MkdirAll(locked, 0o755)
+	for _, n := range []string{"locked/a.mp3", "b.mp3", "c.mp3", "d.mp3"} {
+		os.WriteFile(filepath.Join(dir, filepath.FromSlash(n)), []byte("x"), 0o644)
+	}
+	d := filepath.Join(dir, "d.mp3")
+	var failD atomic.Bool
+	p := &countingProber{fn: func(path string) (media.Probe, error) {
+		if failD.Load() && path == d {
+			return media.Probe{}, errors.New("ffprobe timed out")
+		}
+		return media.Probe{Format: "mp3"}, nil
+	}}
+	st := openStore(t)
+	clk := newClock()
+	ctx := context.Background()
+	sc := NewScanner(st, p, dir, clk.now)
+	if _, err := sc.Scan(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	// Next scan: the folder cannot be listed any more, c.mp3 is gone and
+	// d.mp3 changed but cannot be probed right now.
+	sc.walk = walkFailing(locked, fs.ErrPermission)
+	os.Remove(filepath.Join(dir, "c.mp3"))
+	os.WriteFile(d, []byte("xx"), 0o644)
+	failD.Store(true)
+	clk.t = clk.t.Add(time.Hour)
+	rep, err := sc.Scan(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Skipped != 1 || rep.Missing != 1 || rep.Errors != 1 {
+		t.Fatalf("report = %+v; want 1 skipped, 1 missing, 1 error", rep)
+	}
+	want := map[string]string{
+		"locked/a.mp3": store.FilePending, // behind the unreadable folder
+		"b.mp3":        store.FilePending,
+		"c.mp3":        store.FileMissing, // really gone
+		"d.mp3":        store.FilePending, // probe failed: retried, not missing
+	}
+	for n, status := range want {
+		f, err := st.GetFileByPath(ctx, filepath.Join(dir, filepath.FromSlash(n)))
+		if err != nil || f.Status != status {
+			t.Errorf("%s = %s, %v; want %s", n, f.Status, err, status)
+		}
+	}
+}
+
+func TestScanPermissionDeniedFileIsUnreadable(t *testing.T) {
+	dir := t.TempDir()
+	denied := filepath.Join(dir, "denied.mp3")
+	os.WriteFile(denied, []byte("x"), 0o644)
+	os.WriteFile(filepath.Join(dir, "ok.mp3"), []byte("x"), 0o644)
+	p := &countingProber{fn: func(string) (media.Probe, error) { return media.Probe{Format: "mp3"}, nil }}
+	st := openStore(t)
+	clk := newClock()
+	ctx := context.Background()
+	sc := NewScanner(st, p, dir, clk.now)
+	var locked atomic.Bool
+	locked.Store(true)
+	sc.readable = func(path string) error {
+		if locked.Load() && path == denied {
+			return &fs.PathError{Op: "open", Path: path, Err: fs.ErrPermission}
+		}
+		return nil
+	}
+	rep, err := sc.Scan(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Unreadable != 1 || rep.Errors != 0 || p.calls.Load() != 1 {
+		t.Fatalf("report = %+v, probes = %d; want the denied file unreadable and not probed", rep, p.calls.Load())
+	}
+	if f, _ := st.GetFileByPath(ctx, denied); f.Status != store.FileUnreadable {
+		t.Fatalf("denied file = %s", f.Status)
+	}
+
+	// Unchanged: not checked again. Changed: probed again.
+	clk.t = clk.t.Add(time.Hour)
+	sc.Scan(ctx)
+	if f, _ := st.GetFileByPath(ctx, denied); f.Status != store.FileUnreadable || p.calls.Load() != 1 {
+		t.Fatalf("unchanged denied file = %s, probes = %d", f.Status, p.calls.Load())
+	}
+	locked.Store(false)
+	later := time.Now().Add(time.Minute)
+	os.Chtimes(denied, later, later)
+	clk.t = clk.t.Add(time.Hour)
+	sc.Scan(ctx)
+	if f, _ := st.GetFileByPath(ctx, denied); f.Status != store.FilePending {
+		t.Fatalf("touched file = %s, want pending", f.Status)
+	}
+}
+
+func TestScanSkipsNASSystemFolders(t *testing.T) {
+	dir := t.TempDir()
+	files := []string{
+		"@eaDir/song.mp3/SYNOAUDIO.mp3", "#recycle/old.mp3", "#snapshot/daily/a.mp3",
+		".@__thumb/t.mp3", "@Recycle/r.mp3", "lost+found/l.mp3", "Album/@EADIR/x.mp3",
+		"Album/song.mp3", "@eaDir.mp3",
+	}
+	for _, n := range files {
+		path := filepath.Join(dir, filepath.FromSlash(n))
+		os.MkdirAll(filepath.Dir(path), 0o755)
+		os.WriteFile(path, []byte("x"), 0o644)
+	}
+	p := &countingProber{fn: func(string) (media.Probe, error) { return media.Probe{Format: "mp3"}, nil }}
+	st := openStore(t)
+	rep, err := NewScanner(st, p, dir, newClock().now).Scan(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Only Album/song.mp3 and the file (not folder) named @eaDir.mp3.
+	if rep.Seen != 2 || rep.Skipped != 0 {
+		t.Errorf("report = %+v", rep)
+	}
+}
+
+// TestScanRealUnreadableFolder uses real permissions (not on Windows, and not
+// as root, who reads everything).
+func TestScanRealUnreadableFolder(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("needs POSIX permissions and a non-root user")
+	}
+	dir := t.TempDir()
+	locked := filepath.Join(dir, "locked")
+	os.MkdirAll(locked, 0o755)
+	os.WriteFile(filepath.Join(locked, "a.mp3"), []byte("x"), 0o644)
+	os.WriteFile(filepath.Join(dir, "b.mp3"), []byte("x"), 0o644)
+	denied := filepath.Join(dir, "denied.mp3")
+	os.WriteFile(denied, []byte("x"), 0o644)
+	p := &countingProber{fn: func(string) (media.Probe, error) { return media.Probe{Format: "mp3"}, nil }}
+	st := openStore(t)
+	clk := newClock()
+	ctx := context.Background()
+	sc := NewScanner(st, p, dir, clk.now)
+	sc.Scan(ctx)
+	if err := os.Chmod(locked, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(locked, 0o755) })
+	os.Chmod(denied, 0)
+	t.Cleanup(func() { os.Chmod(denied, 0o644) })
+	later := time.Now().Add(time.Minute)
+	os.Chtimes(denied, later, later)
+	os.Remove(filepath.Join(dir, "b.mp3"))
+	clk.t = clk.t.Add(time.Hour)
+	rep, err := sc.Scan(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Skipped != 1 || rep.Missing != 1 || rep.Unreadable != 1 {
+		t.Errorf("report = %+v; want 1 skipped, 1 missing, 1 unreadable", rep)
+	}
+	if f, _ := st.GetFileByPath(ctx, filepath.Join(locked, "a.mp3")); f.Status != store.FilePending {
+		t.Errorf("file behind the locked folder = %s", f.Status)
 	}
 }

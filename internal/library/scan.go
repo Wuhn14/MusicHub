@@ -39,6 +39,10 @@ type Report struct {
 	Unreadable int // files that are not readable audio, found during this scan
 	Errors     int // files skipped on a transient probe error, retried next scan
 	Missing    int // files newly flagged as missing
+	// Skipped counts the folders and files that could not be read (most
+	// often for lack of permission). What they hold is never flagged as
+	// missing.
+	Skipped int
 }
 
 // availabilityChecker is implemented by probers that can tell up front that
@@ -58,11 +62,37 @@ type Scanner struct {
 	// IncomingDir is the folder uploaded files wait in. The scan never walks
 	// it, so the uploaded files still there are never flagged as missing.
 	IncomingDir string
+
+	// Test seams: the folder walk and the readability check of a file.
+	walk     func(root string, fn fs.WalkDirFunc) error
+	readable func(path string) error
 }
 
 // NewScanner builds a scanner for musicDir.
 func NewScanner(st *store.Store, tools Prober, musicDir string, now func() time.Time) *Scanner {
-	return &Scanner{st: st, tools: tools, musicDir: musicDir, now: now}
+	return &Scanner{st: st, tools: tools, musicDir: musicDir, now: now, walk: filepath.WalkDir, readable: checkReadable}
+}
+
+// checkReadable opens the file and closes it at once: a file the server may
+// not read fails with fs.ErrPermission.
+func checkReadable(path string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	return f.Close()
+}
+
+// systemDirs are folders that NAS systems create inside shared folders
+// (thumbnails, recycle bins, snapshots). Like hidden folders, they are never
+// scanned. Names are compared without case.
+var systemDirs = map[string]bool{
+	"@eadir": true, "#recycle": true, "#snapshot": true, ".@__thumb": true, "@recycle": true, "lost+found": true,
+}
+
+// ignoredName reports whether a file or folder is hidden by its name.
+func ignoredName(name string, dir bool) bool {
+	return strings.HasPrefix(name, ".") || (dir && systemDirs[strings.ToLower(name)])
 }
 
 // Scan walks the music folder once. Files whose size and modification time are
@@ -87,7 +117,8 @@ func (s *Scanner) Scan(ctx context.Context) (Report, error) {
 	}
 
 	started := s.now()
-	complete := true
+	// Paths that could not be read: what they hold is not flagged missing.
+	var excluded []string
 	var seenUnchanged []string
 
 	flush := func() error {
@@ -99,7 +130,7 @@ func (s *Scanner) Scan(ctx context.Context) (Report, error) {
 		return err
 	}
 
-	walkErr := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+	walkErr := s.walk(root, func(path string, d fs.DirEntry, err error) error {
 		if cerr := ctx.Err(); cerr != nil {
 			return cerr
 		}
@@ -107,16 +138,17 @@ func (s *Scanner) Scan(ctx context.Context) (Report, error) {
 			if path == root {
 				return err
 			}
-			// An unreadable subfolder: keep going, but do not flag its
-			// files as missing at the end.
-			slog.Warn("dossier illisible pendant le scan", "path", path, "err", err)
-			complete = false
+			// An unreadable subfolder or file: keep going, but do not flag
+			// what it holds as missing at the end.
+			slog.Warn("élément illisible pendant le scan, ignoré", "path", path, "err", err)
+			excluded = append(excluded, path)
+			rep.Skipped++
 			if d != nil && d.IsDir() {
 				return fs.SkipDir
 			}
 			return nil
 		}
-		if path != root && strings.HasPrefix(d.Name(), ".") {
+		if path != root && ignoredName(d.Name(), d.IsDir()) {
 			if d.IsDir() {
 				return fs.SkipDir
 			}
@@ -130,15 +162,16 @@ func (s *Scanner) Scan(ctx context.Context) (Report, error) {
 		}
 		fi, err := os.Stat(path) // follows a symlinked file
 		if err != nil {
-			slog.Warn("fichier inaccessible pendant le scan", "path", path, "err", err)
-			complete = false
+			slog.Warn("fichier inaccessible pendant le scan, ignoré", "path", path, "err", err)
+			excluded = append(excluded, path)
+			rep.Skipped++
 			return nil
 		}
 		if fi.IsDir() {
 			return nil
 		}
 		rep.Seen++
-		return s.handleFile(ctx, path, fi, started, &rep, &complete, &seenUnchanged, flush)
+		return s.handleFile(ctx, path, fi, started, &rep, &excluded, &seenUnchanged, flush)
 	})
 	if walkErr != nil {
 		return rep, walkErr
@@ -146,13 +179,11 @@ func (s *Scanner) Scan(ctx context.Context) (Report, error) {
 	if err := flush(); err != nil {
 		return rep, err
 	}
-	if complete {
-		n, err := s.st.MarkMissing(ctx, started, s.now(), s.IncomingDir)
-		if err != nil {
-			return rep, err
-		}
-		rep.Missing = n
+	n, err := s.st.MarkMissing(ctx, started, s.now(), s.IncomingDir, excluded...)
+	if err != nil {
+		return rep, err
 	}
+	rep.Missing = n
 	if _, err := s.st.PurgeMissing(ctx, s.now().AddDate(0, 0, -missingKeepDays)); err != nil {
 		return rep, err
 	}
@@ -160,7 +191,7 @@ func (s *Scanner) Scan(ctx context.Context) (Report, error) {
 }
 
 func (s *Scanner) handleFile(ctx context.Context, path string, fi fs.FileInfo, started time.Time,
-	rep *Report, complete *bool, seenUnchanged *[]string, flush func() error) error {
+	rep *Report, excluded *[]string, seenUnchanged *[]string, flush func() error) error {
 	existing, err := s.st.GetFileByPath(ctx, path)
 	known := err == nil
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
@@ -175,7 +206,17 @@ func (s *Scanner) handleFile(ctx context.Context, path string, fi fs.FileInfo, s
 	}
 
 	f := store.File{Path: path, Size: fi.Size(), Mtime: fi.ModTime().UTC(), LastSeen: started, AddedAt: started}
-	pr, perr := s.tools.Probe(ctx, path)
+	// A file the server may not read is recorded as unreadable, like a
+	// file that is not audio: it is probed again once its size or date
+	// changes (a fixed permission alone changes neither: rescan by touching
+	// the file).
+	var pr media.Probe
+	perr := s.readable(path)
+	if errors.Is(perr, fs.ErrPermission) {
+		perr = fmt.Errorf("%w: %w", media.ErrNotAudio, perr)
+	} else if perr == nil {
+		pr, perr = s.tools.Probe(ctx, path)
+	}
 	if perr != nil {
 		if cerr := ctx.Err(); cerr != nil {
 			return cerr
@@ -185,7 +226,7 @@ func (s *Scanner) handleFile(ctx context.Context, path string, fi fs.FileInfo, s
 			// the file is retried, and do not flag anything as missing.
 			slog.Warn("analyse impossible, nouvel essai au prochain scan", "path", path, "err", perr)
 			rep.Errors++
-			*complete = false
+			*excluded = append(*excluded, path)
 			return nil
 		}
 		f.Status = store.FileUnreadable

@@ -100,11 +100,11 @@ func TestAPILibraryScanAndStatus(t *testing.T) {
 		t.Fatalf("scan = %d %q triggered=%d", rec.Code, rec.Body, r.triggered)
 	}
 	r.status = library.RunnerStatus{Running: true, LastError: "boom",
-		LastRun: time.Date(2026, 4, 1, 12, 0, 0, 0, time.UTC), LastReport: library.Report{Seen: 12, Unreadable: 2}}
+		LastRun: time.Date(2026, 4, 1, 12, 0, 0, 0, time.UTC), LastReport: library.Report{Seen: 12, Unreadable: 2, Skipped: 3}}
 	st := decode(t, send(t, h, "GET", "/api/library/status", ""))
 	rep := st["lastReport"].(map[string]any)
 	if st["running"] != true || st["lastError"] != "boom" || st["lastRun"] != "2026-04-01T12:00:00Z" ||
-		rep["seen"] != float64(12) || rep["unreadable"] != float64(2) || rep["errors"] != float64(0) {
+		rep["seen"] != float64(12) || rep["unreadable"] != float64(2) || rep["errors"] != float64(0) || rep["skipped"] != float64(3) {
 		t.Fatalf("status = %v", st)
 	}
 	if rec := send(t, h, "GET", "/api/library/scan", ""); rec.Code == http.StatusAccepted {

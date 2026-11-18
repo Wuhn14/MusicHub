@@ -100,5 +100,5 @@ func (r *Runner) scanOnce(ctx context.Context) {
 		return
 	}
 	slog.Info("scan de la bibliothèque terminé", "vus", rep.Seen, "ajoutés", rep.Added,
-		"modifiés", rep.Updated, "illisibles", rep.Unreadable, "disparus", rep.Missing)
+		"modifiés", rep.Updated, "illisibles", rep.Unreadable, "disparus", rep.Missing, "ignorés", rep.Skipped)
 }

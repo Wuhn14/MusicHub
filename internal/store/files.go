@@ -321,21 +321,81 @@ WHERE id = ?`, formatTime(seen), id); err != nil {
 // many files were flagged. Uploaded files that are still pending, or whose
 // path is still under keepUnder (the incoming folder, which the scanner never
 // walks), are never flagged; an empty keepUnder exempts only pending uploads.
-func (s *Store) MarkMissing(ctx context.Context, seenSince, now time.Time, keepUnder string) (int, error) {
+// Files at or under an excluded path (a folder or file the scan could not
+// read) are not flagged either: their absence from the scan proves nothing.
+func (s *Store) MarkMissing(ctx context.Context, seenSince, now time.Time, keepUnder string, excluded ...string) (int, error) {
 	prefix := ""
 	if keepUnder != "" {
 		prefix = strings.TrimRight(keepUnder, `/\`) + string(filepath.Separator)
 	}
-	res, err := s.db.ExecContext(ctx, `
-UPDATE files SET prev_status = status, status = 'missing', missing_since = ?
-WHERE status <> 'missing' AND last_seen < ?
-  AND NOT (origin = 'uploaded' AND (status = 'pending' OR (? <> '' AND substr(path, 1, length(?)) = ?)))`,
-		formatTime(now), formatTime(seenSince), prefix, prefix, prefix)
+	const where = `status <> 'missing' AND last_seen < ?
+  AND NOT (origin = 'uploaded' AND (status = 'pending' OR (? <> '' AND substr(path, 1, length(?)) = ?)))`
+	const set = `UPDATE files SET prev_status = status, status = 'missing', missing_since = ? WHERE `
+	if len(excluded) == 0 {
+		res, err := s.db.ExecContext(ctx, set+where, formatTime(now), formatTime(seenSince), prefix, prefix, prefix)
+		if err != nil {
+			return 0, err
+		}
+		n, err := res.RowsAffected()
+		return int(n), err
+	}
+
+	// With exclusions, pick the candidates first and filter them here: the
+	// list of unreadable paths has no useful bound for one SQL statement.
+	rows, err := s.db.QueryContext(ctx, `SELECT id, path FROM files WHERE `+where,
+		formatTime(seenSince), prefix, prefix, prefix)
 	if err != nil {
 		return 0, err
 	}
-	n, err := res.RowsAffected()
-	return int(n), err
+	var ids []string
+	for rows.Next() {
+		var id, path string
+		if err := rows.Scan(&id, &path); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		if !underAny(path, excluded) {
+			ids = append(ids, id)
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	total := 0
+	for _, id := range ids {
+		// The conditions are checked again: the row may have changed since.
+		res, err := tx.ExecContext(ctx, set+`id = ? AND `+where,
+			formatTime(now), id, formatTime(seenSince), prefix, prefix, prefix)
+		if err != nil {
+			return 0, err
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return 0, err
+		}
+		total += int(n)
+	}
+	return total, tx.Commit()
+}
+
+// underAny reports whether path is one of roots or inside one of them.
+func underAny(path string, roots []string) bool {
+	for _, r := range roots {
+		r = strings.TrimRight(r, `/\`)
+		if r == "" {
+			continue
+		}
+		if path == r || strings.HasPrefix(path, r+string(filepath.Separator)) {
+			return true
+		}
+	}
+	return false
 }
 
 // PurgeMissing deletes files missing since before olderThan.

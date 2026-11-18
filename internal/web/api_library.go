@@ -156,6 +156,7 @@ type scanReportJSON struct {
 	Unreadable int `json:"unreadable"`
 	Missing    int `json:"missing"`
 	Errors     int `json:"errors"`
+	Skipped    int `json:"skipped"`
 }
 
 func (a *api) libStatus(w http.ResponseWriter, _ *http.Request) {
@@ -170,5 +171,5 @@ func (a *api) libStatus(w http.ResponseWriter, _ *http.Request) {
 		LastRun    string         `json:"lastRun"`
 		LastError  string         `json:"lastError"`
 		LastReport scanReportJSON `json:"lastReport"`
-	}{st.Running, lastRun, st.LastError, scanReportJSON{rep.Seen, rep.Added, rep.Updated, rep.Unreadable, rep.Missing, rep.Errors}})
+	}{st.Running, lastRun, st.LastError, scanReportJSON{rep.Seen, rep.Added, rep.Updated, rep.Unreadable, rep.Missing, rep.Errors, rep.Skipped}})
 }

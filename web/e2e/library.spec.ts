@@ -40,3 +40,18 @@ test('unknown library album key gives a clear error', async ({ page }) => {
   await page.goto('/library/album/bm90LWEta2V5');
   await expect(page.getByRole('alert')).toContainText('Introuvable');
 });
+
+test('the scan summary tells how many items could not be read', async ({ page }) => {
+  await page.route('**/api/library/status', (route) =>
+    route.fulfill({
+      json: {
+        running: false,
+        lastRun: '2026-04-01T12:00:00Z',
+        lastError: '',
+        lastReport: { seen: 3, added: 0, updated: 0, unreadable: 0, missing: 0, errors: 0, skipped: 2 },
+      },
+    }),
+  );
+  await page.goto('/library');
+  await expect(page.getByText('Dernière analyse : 3 fichiers, 2 éléments ignorés (droits insuffisants)')).toBeVisible();
+});

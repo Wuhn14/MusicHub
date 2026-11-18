@@ -240,6 +240,8 @@ export interface ScanReport {
   unreadable: number;
   missing: number;
   errors: number;
+  /** Folders and files the scan could not read (permissions). */
+  skipped: number;
 }
 
 export interface ScanStatus {
