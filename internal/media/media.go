@@ -74,6 +74,15 @@ func toolStatus(ctx context.Context, name, bin string) ToolStatus {
 	return st
 }
 
+// safePath makes a path safe to pass as a bare argument: a leading "-" would be
+// parsed as an option, so such relative paths get a "./" prefix.
+func safePath(p string) string {
+	if strings.HasPrefix(p, "-") {
+		return "./" + p
+	}
+	return p
+}
+
 // run executes bin with args and returns stdout and stderr. On failure the
 // error carries the (truncated) stderr.
 func run(ctx context.Context, timeout time.Duration, bin string, args ...string) ([]byte, string, error) {

@@ -49,7 +49,7 @@ type ffprobeOutput struct {
 // without an audio stream (or that ffprobe cannot parse) yields ErrNotAudio.
 func (t *Tools) Probe(ctx context.Context, path string) (Probe, error) {
 	out, stderr, err := run(ctx, probeTimeout, t.ffprobe,
-		"-v", "error", "-print_format", "json", "-show_format", "-show_streams", path)
+		"-v", "error", "-print_format", "json", "-show_format", "-show_streams", "-i", safePath(path))
 	if err != nil {
 		if strings.Contains(stderr, "Invalid data found") {
 			return Probe{}, ErrNotAudio

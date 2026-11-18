@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -188,5 +190,67 @@ func TestWriteTagsRoundTrip(t *testing.T) {
 	entries, _ := os.ReadDir(dir)
 	if len(entries) != 4 {
 		t.Errorf("leftover temp files: %v", entries)
+	}
+}
+
+func TestWriteTagsKeepsFileMode(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("file modes are not meaningful on Windows")
+	}
+	tl := tools(t)
+	path := mediatest.Sine(t, t.TempDir(), "m.flac", 1, nil)
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := tl.WriteTags(context.Background(), path, Tags{Title: "x"}); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o644 {
+		t.Errorf("mode %v, want 0644", info.Mode().Perm())
+	}
+}
+
+func TestWriteTagsFailureLeavesOriginalAndNoTemp(t *testing.T) {
+	tl := tools(t)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "fake.mp3")
+	content := []byte("not audio")
+	if err := os.WriteFile(path, content, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := tl.WriteTags(context.Background(), path, Tags{Title: "x"}); err == nil {
+		t.Fatal("want an error")
+	}
+	got, _ := os.ReadFile(path)
+	if !bytes.Equal(got, content) {
+		t.Error("original was modified")
+	}
+	entries, _ := os.ReadDir(dir)
+	if len(entries) != 1 {
+		t.Errorf("leftover files: %v", entries)
+	}
+}
+
+func TestDashPrefixedPaths(t *testing.T) {
+	mediatest.RequireTool(t, "fpcalc")
+	tl := tools(t)
+	dir := t.TempDir()
+	mediatest.Sine(t, dir, "-dash.mp3", 4, nil)
+	t.Chdir(dir)
+	if _, err := tl.Probe(context.Background(), "-dash.mp3"); err != nil {
+		t.Errorf("Probe: %v", err)
+	}
+	if _, _, err := tl.Fingerprint(context.Background(), "-dash.mp3"); err != nil {
+		t.Errorf("Fingerprint: %v", err)
+	}
+	if err := tl.Transcode(context.Background(), "-dash.mp3", 0, 0, io.Discard); err == nil {
+		t.Error("Transcode with 0 kbps should fail")
+	}
+	if err := tl.Transcode(context.Background(), "-dash.mp3", 0, 128, io.Discard); err != nil {
+		t.Errorf("Transcode: %v", err)
 	}
 }

@@ -12,13 +12,16 @@ import (
 // Transcode streams the first audio stream of path, starting at startMs, as
 // MP3 at kbps into w. It is bounded only by ctx: cancelling ctx kills ffmpeg.
 func (t *Tools) Transcode(ctx context.Context, path string, startMs, kbps int, w io.Writer) error {
+	if kbps <= 0 {
+		return fmt.Errorf("media: invalid bitrate %d kbps", kbps)
+	}
 	if startMs < 0 {
 		startMs = 0
 	}
 	args := []string{
-		"-hide_banner", "-loglevel", "error",
+		"-hide_banner", "-loglevel", "error", "-nostdin",
 		"-ss", fmt.Sprintf("%d.%03d", startMs/1000, startMs%1000),
-		"-i", path,
+		"-i", safePath(path),
 		"-vn", "-map", "0:a:0",
 		"-c:a", "libmp3lame", "-b:a", fmt.Sprintf("%dk", kbps),
 		"-f", "mp3", "pipe:1",

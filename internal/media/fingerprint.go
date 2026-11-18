@@ -15,7 +15,7 @@ import (
 // Fingerprint computes the Chromaprint fingerprint of path with fpcalc and
 // returns it with the audio duration in seconds.
 func (t *Tools) Fingerprint(ctx context.Context, path string) (string, int, error) {
-	out, _, err := run(ctx, fingerprintTimeout, t.fpcalc, "-json", path)
+	out, _, err := run(ctx, fingerprintTimeout, t.fpcalc, "-json", safePath(path))
 	if err != nil {
 		return "", 0, err
 	}
@@ -36,6 +36,11 @@ func (t *Tools) Fingerprint(ctx context.Context, path string) (string, int, erro
 // zero track/disc numbers) are left as they are. The file is remuxed to a
 // temporary file in the same directory, which then replaces the original.
 func (t *Tools) WriteTags(ctx context.Context, path string, tg Tags) error {
+	path = safePath(path)
+	info, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
 	ext := strings.ToLower(filepath.Ext(path))
 	origExt := filepath.Ext(path)
 	tmpFile, err := os.CreateTemp(filepath.Dir(path), ".musichub-tags-*"+origExt)
@@ -44,6 +49,10 @@ func (t *Tools) WriteTags(ctx context.Context, path string, tg Tags) error {
 	}
 	tmp := tmpFile.Name()
 	tmpFile.Close()
+	if err := os.Chmod(tmp, info.Mode().Perm()); err != nil {
+		os.Remove(tmp)
+		return err
+	}
 	ok := false
 	defer func() {
 		if !ok {
@@ -51,7 +60,7 @@ func (t *Tools) WriteTags(ctx context.Context, path string, tg Tags) error {
 		}
 	}()
 
-	args := []string{"-hide_banner", "-loglevel", "error", "-i", path,
+	args := []string{"-hide_banner", "-loglevel", "error", "-nostdin", "-i", path,
 		"-map", "0", "-c", "copy", "-map_metadata", "0"}
 	// Ogg/Opus keep their comments on the stream, and stream tags copied from
 	// the input would win over global ones, so write both there.
