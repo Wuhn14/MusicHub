@@ -41,7 +41,9 @@ func TestSendsUserAgentAndJSON(t *testing.T) {
 
 func TestRespectsMinInterval(t *testing.T) {
 	const interval = 100 * time.Millisecond
-	c, srv := newTestClient(t, interval)
+	c, _ := newTestClient(t, interval)
+	sends := recordSends(c)
+	start := time.Now()
 	var wg sync.WaitGroup
 	// Concurrent callers must share the limiter.
 	for i := 0; i < 3; i++ {
@@ -54,16 +56,11 @@ func TestRespectsMinInterval(t *testing.T) {
 		}()
 	}
 	wg.Wait()
-	times := srv.Times()
+	times := sends.all()
 	if len(times) != 3 {
 		t.Fatalf("got %d requests, want 3", len(times))
 	}
-	for i := 1; i < len(times); i++ {
-		// Small tolerance for timer/clock granularity.
-		if gap := times[i].Sub(times[i-1]); gap < interval-10*time.Millisecond {
-			t.Errorf("gap %d = %v, want >= %v", i, gap, interval)
-		}
-	}
+	checkSpacing(t, start, times, interval)
 }
 
 func TestSearchEscapesLuceneSyntax(t *testing.T) {

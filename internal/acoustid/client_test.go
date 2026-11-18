@@ -97,21 +97,19 @@ func TestLookupUnavailable(t *testing.T) {
 
 func TestLookupRateLimited(t *testing.T) {
 	const interval = 333 * time.Millisecond
-	c, srv := newTestClient(t, interval)
+	c, _ := newTestClient(t, interval)
+	sends := recordSends(c)
+	start := time.Now()
 	for i := 0; i < 3; i++ {
 		if _, err := c.Lookup(context.Background(), "k", "fp", 10); err != nil {
 			t.Fatal(err)
 		}
 	}
-	reqs := srv.All()
-	if len(reqs) != 3 {
-		t.Fatalf("got %d requests", len(reqs))
+	times := sends.all()
+	if len(times) != 3 {
+		t.Fatalf("got %d requests", len(times))
 	}
-	for i := 1; i < len(reqs); i++ {
-		if gap := reqs[i].At.Sub(reqs[i-1].At); gap < interval-20*time.Millisecond {
-			t.Errorf("gap %d = %v, want >= %v", i, gap, interval)
-		}
-	}
+	checkSpacing(t, start, times, interval)
 }
 
 func TestLookupKeyNotLogged(t *testing.T) {
