@@ -18,6 +18,7 @@ import (
 	"github.com/Wuhn14/MusicHub/internal/catalog/musicbrainz"
 	"github.com/Wuhn14/MusicHub/internal/identify"
 	"github.com/Wuhn14/MusicHub/internal/store"
+	"github.com/Wuhn14/MusicHub/internal/upload"
 )
 
 // Limits of the "À identifier" routes.
@@ -402,10 +403,6 @@ func (a *api) saveLocalCover(trackID, ext string, data []byte) (string, error) {
 	return name, nil
 }
 
-// deletingSuffix marks an uploaded file being deleted: renamed first, so
-// nothing else can use it while its row is removed.
-const deletingSuffix = ".deleting"
-
 // identifyDelete answers DELETE /api/identify/{fileId}: an uploaded file
 // still waiting in the incoming folder is deleted, from the disk first, then
 // from the database. A file in the music folder (dropped, or anything outside
@@ -429,7 +426,7 @@ func (a *api) identifyDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Take the file out of the way first: if that fails, nothing changed.
-	tomb := f.Path + deletingSuffix
+	tomb := f.Path + upload.DeletingSuffix
 	if err := os.Rename(f.Path, tomb); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		slog.Error("uploaded file not removed from disk", "file", f.ID, "path", f.Path, "err", err)
 		writeError(w, http.StatusInternalServerError, msgDeleteFailed)

@@ -1,6 +1,7 @@
 package library
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -497,47 +498,130 @@ func copyInto(src, dst string) error {
 }
 
 // RepairPlacing settles the moves a stop interrupted. Call it at startup,
-// before the first scan. A row whose destination holds the file (same size as
-// recorded, or the source is gone) keeps it; a row whose source still exists
-// goes back to it, and PlaceStranded moves it again. The temporary files left
-// in the music folder are removed.
+// before the first scan. When only the destination exists, the row keeps
+// it. When both exist, the source is dropped only if the destination is
+// provably the same file (another name of it, or identical bytes); otherwise
+// the row goes back to the source, both files are kept, and PlaceStranded
+// moves it again. Errors on one row are logged and the next rows are still
+// repaired. The temporary files left in the music folder are removed.
 func (o *Organizer) RepairPlacing(ctx context.Context) error {
 	o.mu.Lock()
 	defer o.mu.Unlock()
 	files, err := o.st.ListPlacing(ctx)
 	if err != nil {
-		return err
+		slog.Error("rangements interrompus illisibles", "err", err)
 	}
 	for _, f := range files {
-		dstInfo, derr := os.Stat(f.Path)
-		_, serr := os.Stat(f.PlacingFrom)
-		srcGone := errors.Is(serr, fs.ErrNotExist)
-		switch {
-		case derr == nil && (dstInfo.Size() == f.Size || srcGone):
-			if err := o.st.FinishPlacing(ctx, f.ID, dstInfo.Size(), dstInfo.ModTime(), nil, o.now()); err != nil {
-				return err
-			}
-			if serr == nil {
-				// The copy was complete but the source not removed yet.
-				if err := os.Remove(f.PlacingFrom); err != nil {
-					slog.Warn("rangement interrompu : ancien fichier non supprimé", "path", f.PlacingFrom, "err", err)
-				}
-			}
-			slog.Info("rangement interrompu terminé", "file", f.ID, "path", f.Path)
-		case serr == nil:
-			if err := o.st.SetFilePath(ctx, f.ID, f.PlacingFrom); err != nil {
-				return err
-			}
-			slog.Info("rangement interrompu annulé, le fichier sera rangé à nouveau", "file", f.ID, "path", f.PlacingFrom)
-		default:
-			slog.Error("rangement interrompu : fichier introuvable", "file", f.ID, "path", f.Path, "from", f.PlacingFrom)
+		if err := o.repairOne(ctx, f); err != nil {
+			slog.Error("rangement interrompu non réparé", "file", f.ID, "path", f.Path, "from", f.PlacingFrom, "err", err)
 		}
 	}
-	n, err := removeTemps(o.musicDir)
+	n, terr := removeTemps(o.musicDir)
 	if n > 0 {
 		slog.Info("fichiers temporaires de rangement supprimés", "count", n)
 	}
-	return err
+	return errors.Join(err, terr)
+}
+
+// repairOne settles one interrupted move (see RepairPlacing).
+func (o *Organizer) repairOne(ctx context.Context, f store.File) error {
+	dstInfo, derr := os.Stat(f.Path)
+	srcInfo, serr := os.Stat(f.PlacingFrom)
+	if serr != nil && !errors.Is(serr, fs.ErrNotExist) {
+		return serr
+	}
+	if derr != nil && !errors.Is(derr, fs.ErrNotExist) {
+		return derr
+	}
+	srcExists, dstExists := serr == nil, derr == nil
+	keepDst := func() error {
+		return o.st.FinishPlacing(ctx, f.ID, dstInfo.Size(), dstInfo.ModTime(), nil, o.now())
+	}
+	switch {
+	case dstExists && !srcExists:
+		if err := keepDst(); err != nil {
+			return err
+		}
+		slog.Info("rangement interrompu terminé", "file", f.ID, "path", f.Path)
+	case dstExists && srcExists:
+		same := os.SameFile(srcInfo, dstInfo)
+		if !same {
+			var err error
+			if same, err = sameContent(f.PlacingFrom, f.Path); err != nil {
+				return err
+			}
+		}
+		if !same {
+			// Another file took the destination's name: it is not ours.
+			if err := o.st.SetFilePath(ctx, f.ID, f.PlacingFrom); err != nil {
+				return err
+			}
+			slog.Warn("rangement interrompu : la destination est un autre fichier, les deux sont gardés", "file", f.ID, "path", f.PlacingFrom, "other", f.Path)
+			return nil
+		}
+		if err := keepDst(); err != nil {
+			return err
+		}
+		// The move was complete except for removing the source.
+		if err := os.Remove(f.PlacingFrom); err != nil {
+			slog.Warn("rangement interrompu : ancien fichier non supprimé", "path", f.PlacingFrom, "err", err)
+		}
+		slog.Info("rangement interrompu terminé", "file", f.ID, "path", f.Path)
+	case srcExists:
+		if err := o.st.SetFilePath(ctx, f.ID, f.PlacingFrom); err != nil {
+			return err
+		}
+		slog.Info("rangement interrompu annulé, le fichier sera rangé à nouveau", "file", f.ID, "path", f.PlacingFrom)
+	default:
+		slog.Error("rangement interrompu : fichier introuvable", "file", f.ID, "path", f.Path, "from", f.PlacingFrom)
+	}
+	return nil
+}
+
+// sameContent reports whether two files hold the same bytes, reading both
+// in chunks.
+func sameContent(a, b string) (bool, error) {
+	fa, err := os.Open(a)
+	if err != nil {
+		return false, err
+	}
+	defer fa.Close()
+	fb, err := os.Open(b)
+	if err != nil {
+		return false, err
+	}
+	defer fb.Close()
+	ia, err := fa.Stat()
+	if err != nil {
+		return false, err
+	}
+	ib, err := fb.Stat()
+	if err != nil {
+		return false, err
+	}
+	if ia.Size() != ib.Size() {
+		return false, nil
+	}
+	const chunk = 64 << 10
+	bufA, bufB := make([]byte, chunk), make([]byte, chunk)
+	for {
+		na, errA := io.ReadFull(fa, bufA)
+		nb, errB := io.ReadFull(fb, bufB)
+		if na != nb || !bytes.Equal(bufA[:na], bufB[:nb]) {
+			return false, nil
+		}
+		endA := errors.Is(errA, io.EOF) || errors.Is(errA, io.ErrUnexpectedEOF)
+		endB := errors.Is(errB, io.EOF) || errors.Is(errB, io.ErrUnexpectedEOF)
+		if errA != nil && !endA {
+			return false, errA
+		}
+		if errB != nil && !endB {
+			return false, errB
+		}
+		if endA || endB {
+			return endA && endB, nil
+		}
+	}
 }
 
 // removeTemps deletes the leftover temporary files of the organizer and the

@@ -471,6 +471,77 @@ func TestRepairPlacingAfterCrash(t *testing.T) {
 			t.Errorf("source left: %v", err)
 		}
 	})
+
+	t.Run("another file of the same size at the destination", func(t *testing.T) {
+		e := newOrgEnv(t, nil)
+		f := e.upload(t, "audio")
+		e.makeLocal(t, f, store.LocalTrack{Title: "Autre", Artist: "Moi"})
+		dst := filepath.Join(e.music, "Moi", "Titres sans album", "Autre.mp3")
+		if err := e.st.BeginPlacing(ctx, f.ID, dst, f.Path); err != nil {
+			t.Fatal(err)
+		}
+		// Someone else's file took the name (the link was refused), then
+		// the process stopped before the row was restored.
+		os.MkdirAll(filepath.Dir(dst), 0o755)
+		os.WriteFile(dst, []byte("other"), 0o644)
+		if err := e.org.RepairPlacing(ctx); err != nil {
+			t.Fatal(err)
+		}
+		row, _ := e.st.GetFile(ctx, f.ID)
+		if row.Path != f.Path || row.PlacingFrom != "" {
+			t.Fatalf("row = %q from %q, want back on %q", row.Path, row.PlacingFrom, f.Path)
+		}
+		if readFile(t, f.Path) != "audio" || readFile(t, dst) != "other" {
+			t.Error("a file was lost or changed")
+		}
+	})
+
+	t.Run("destination is another name of the source", func(t *testing.T) {
+		e := newOrgEnv(t, nil)
+		f := e.upload(t, "audio")
+		e.makeLocal(t, f, store.LocalTrack{Title: "Lien", Artist: "Moi"})
+		dst := filepath.Join(e.music, "Moi", "Titres sans album", "Lien.mp3")
+		if err := e.st.BeginPlacing(ctx, f.ID, dst, f.Path); err != nil {
+			t.Fatal(err)
+		}
+		os.MkdirAll(filepath.Dir(dst), 0o755)
+		if err := os.Link(f.Path, dst); err != nil {
+			t.Skipf("hard links not supported here: %v", err)
+		}
+		if err := e.org.RepairPlacing(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if row, _ := e.st.GetFile(ctx, f.ID); row.Path != dst || row.PlacingFrom != "" {
+			t.Fatalf("row = %+v", row)
+		}
+		if _, err := os.Stat(f.Path); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("old name left: %v", err)
+		}
+		if readFile(t, dst) != "audio" {
+			t.Error("content lost")
+		}
+	})
+}
+
+func TestSameContent(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name, s string) string {
+		p := filepath.Join(dir, name)
+		os.WriteFile(p, []byte(s), 0o644)
+		return p
+	}
+	big := strings.Repeat("x", 200<<10)
+	a, b := write("a", big), write("b", big)
+	c := write("c", big[:len(big)-1]+"y")
+	d := write("d", big[:100])
+	for _, tc := range []struct {
+		x, y string
+		want bool
+	}{{a, b, true}, {a, c, false}, {a, d, false}} {
+		if got, err := sameContent(tc.x, tc.y); err != nil || got != tc.want {
+			t.Errorf("sameContent(%s, %s) = %v, %v", filepath.Base(tc.x), filepath.Base(tc.y), got, err)
+		}
+	}
 }
 
 func assertNoTemp(t *testing.T, dir string) {

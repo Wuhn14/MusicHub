@@ -83,6 +83,14 @@ func run() error {
 	if err := organizer.RepairPlacing(ctx); err != nil {
 		slog.Warn("réparation des rangements interrompus incomplète", "err", err)
 	}
+	// Likewise for deletions of uploads interrupted by a stop.
+	restoredDel, removedDel, err := upload.RecoverDeletes(ctx, st, incomingDir)
+	if err != nil {
+		slog.Warn("suppressions d'envois interrompues non vérifiées", "err", err)
+	}
+	if restoredDel > 0 || removedDel > 0 {
+		slog.Info("suppressions d'envois interrompues réglées", "restaurés", restoredDel, "supprimés", removedDel)
+	}
 
 	// Identification runs in the background from a persistent job queue;
 	// the scanner queues every new or modified pending file.
