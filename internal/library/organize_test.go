@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -412,6 +413,62 @@ func TestOrganizeNeverReplacesAppearingDestination(t *testing.T) {
 			}
 			if want := filepath.Join(filepath.Dir(dst), "Course (2).mp3"); got.Path != want || readFile(t, want) != "mine" {
 				t.Errorf("placed at %q", got.Path)
+			}
+		})
+	}
+}
+
+// A source that cannot be removed (read-only folder) must not leave two names
+// in the library: the move is undone and the file stays where it was.
+func TestOrganizeUndoesMoveWhenSourceStays(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		link, rename func(string, string) error
+	}{
+		{"same disk (link)", nil, nil},
+		{"other disk (copy)",
+			func(o, n string) error { return &os.LinkError{Op: "link", Old: o, New: n, Err: errCrossDevice} },
+			func(o, n string) error {
+				if isTemp(o) {
+					return os.Rename(o, n)
+				}
+				return &os.LinkError{Op: "rename", Old: o, New: n, Err: errCrossDevice}
+			}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newOrgEnv(t, nil)
+			fsHooks(t, tc.link, tc.rename)
+			f := e.upload(t, "mine")
+			e.makeLocal(t, f, store.LocalTrack{Title: "Collée", Artist: "Moi"})
+			orig := removeFile
+			t.Cleanup(func() { removeFile = orig })
+			removeFile = func(p string) error {
+				if p == f.Path {
+					return &os.PathError{Op: "remove", Path: p, Err: os.ErrPermission}
+				}
+				return orig(p)
+			}
+
+			_, err := e.org.Place(context.Background(), f.ID)
+			if !errors.Is(err, errSourceKept) {
+				t.Fatalf("Place error = %v, want errSourceKept", err)
+			}
+			if readFile(t, f.Path) != "mine" {
+				t.Error("source changed")
+			}
+			row, _ := e.st.GetFile(context.Background(), f.ID)
+			if row.Path != f.Path || row.PlacingFrom != "" {
+				t.Errorf("row path %q placing_from %q, want back at %q", row.Path, row.PlacingFrom, f.Path)
+			}
+			var left []string
+			filepath.WalkDir(e.music, func(p string, d fs.DirEntry, err error) error {
+				if err == nil && !d.IsDir() {
+					left = append(left, p)
+				}
+				return nil
+			})
+			if len(left) != 0 {
+				t.Errorf("files left in the music folder: %v", left)
 			}
 		})
 	}

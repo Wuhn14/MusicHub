@@ -399,18 +399,26 @@ var (
 	linkFile = os.Link
 	// renameFile moves a file (replacing newname on some systems).
 	renameFile = os.Rename
+	// removeFile deletes a name (a read-only source folder makes it fail).
+	removeFile = os.Remove
 )
+
+// errSourceKept reports a move undone because the source could not be removed:
+// keeping both names would let the next scan add the source a second time.
+var errSourceKept = errors.New("source could not be removed, move undone")
 
 // placeNoReplace gives src the name dst without ever replacing an existing
 // dst (an error matching fs.ErrExist then). A hard link does it atomically;
 // where links are not supported, dst is checked right before a rename. Any
-// other failure (another disk, for instance) is returned as is.
+// other failure (another disk, for instance) is returned as is. When src
+// cannot be removed after the link, the link is undone and errSourceKept is
+// returned, so the file stays where it was.
 func placeNoReplace(src, dst string) error {
 	lerr := linkFile(src, dst)
 	if lerr == nil {
-		if err := os.Remove(src); err != nil {
-			// dst is complete; only the old name is left behind.
-			slog.Warn("rangement : ancien nom non supprimé", "path", src, "err", err)
+		if err := removeFile(src); err != nil {
+			undoLink(src, dst)
+			return fmt.Errorf("%w: %v", errSourceKept, err)
 		}
 		return nil
 	}
@@ -440,11 +448,37 @@ func moveFile(src, dst string) error {
 	if err := copyInto(src, dst); err != nil {
 		return err
 	}
-	if err := os.Remove(src); err != nil {
-		// The copy is complete and recorded; the leftover source is harmless.
-		slog.Warn("rangement : fichier d'origine non supprimé après copie", "path", src, "err", err)
+	if err := removeFile(src); err != nil {
+		// Both copies would stay in the library: drop ours, keep the source.
+		undoCopy(src, dst)
+		return fmt.Errorf("%w: %v", errSourceKept, err)
 	}
 	return nil
+}
+
+// undoLink removes dst only when it is another name of src, the link just made.
+func undoLink(src, dst string) {
+	si, serr := os.Stat(src)
+	di, derr := os.Stat(dst)
+	if serr != nil || derr != nil || !os.SameFile(si, di) {
+		slog.Error("rangement : lien non annulé, vérifie les deux noms", "source", src, "destination", dst)
+		return
+	}
+	if err := removeFile(dst); err != nil {
+		slog.Error("rangement : lien non annulé", "destination", dst, "err", err)
+	}
+}
+
+// undoCopy removes dst only when its bytes are those of src, the copy just made.
+func undoCopy(src, dst string) {
+	same, err := sameContent(src, dst)
+	if err != nil || !same {
+		slog.Error("rangement : copie non annulée, vérifie les deux fichiers", "source", src, "destination", dst, "err", err)
+		return
+	}
+	if err := removeFile(dst); err != nil {
+		slog.Error("rangement : copie non annulée", "destination", dst, "err", err)
+	}
 }
 
 // tempPrefixes start the names of the temporary files the organizer and the
