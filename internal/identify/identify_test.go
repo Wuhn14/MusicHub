@@ -604,8 +604,11 @@ func TestJobsSurviveRestart(t *testing.T) {
 
 	deadline := time.Now().Add(10 * time.Second)
 	for {
+		// Wait for the jobs to be settled too, not only the files: the worker
+		// records a job's outcome right after identifying its file.
 		a, b := e.file(t, queued.ID), e.file(t, backlog.ID)
-		if a.Status == store.FileIdentified && b.Status == store.FileIdentified {
+		s := w.Status()
+		if a.Status == store.FileIdentified && b.Status == store.FileIdentified && s.Queued == 0 && s.Done == 2 {
 			break
 		}
 		if time.Now().After(deadline) {

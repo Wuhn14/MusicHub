@@ -177,10 +177,13 @@ func (w *Worker) process(ctx context.Context, job store.Job) {
 
 func (w *Worker) runJob(ctx context.Context, job store.Job) {
 	res, err := w.id.Identify(ctx, job.FileID)
-	if ctx.Err() != nil {
+	if err != nil && ctx.Err() != nil {
 		// Interrupted: the job stays queued for the next start.
 		return
 	}
+	// The outcome is settled: recording it must not be cut short by a stop,
+	// or a finished job would stay queued.
+	ctx = context.WithoutCancel(ctx)
 	switch {
 	case err == nil:
 		slog.Info("identification terminée", "file", job.FileID, "status", res.Status,
