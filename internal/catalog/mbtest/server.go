@@ -25,6 +25,7 @@ import (
 	"net/url"
 	"regexp"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -43,10 +44,13 @@ const (
 	// is willing to browse.
 	ArtistHuge = "00000000-0000-4000-8000-0000000000a3"
 	// AlbumTwoDisc is a release group with five releases; its reference
-	// release is ReleaseReference (official, earliest, two discs, three
-	// tracks).
+	// release is ReleaseReference (official, earliest, fewest tracks: two
+	// discs, five tracks, RecordingGlassTide last).
 	AlbumTwoDisc     = "00000000-0000-4000-8000-0000000000b1"
 	ReleaseReference = "00000000-0000-4000-8000-0000000000c1"
+	// RecordingGlassTide is a recording with a lookup fixture: second disc,
+	// third track of ReleaseReference, the reference release of AlbumTwoDisc.
+	RecordingGlassTide = "00000000-0000-4000-8000-0000000000d1"
 	// ManyAlbums is the number of release groups of ArtistMany.
 	ManyAlbums = 230
 	// HugeAlbums is the number of release groups of ArtistHuge.
@@ -152,6 +156,11 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 	kind, id := m[1], m[2]
 	switch {
 	case id == "" && q.Get("query") != "" && (kind == "artist" || kind == "release-group" || kind == "recording"):
+		if kind == "recording" && strings.Contains(q.Get("query"), "recording:") {
+			// Fielded query from FindRecordings.
+			serveFile(w, "recording_find.json")
+			return
+		}
 		serveFile(w, kind+"_search.json")
 	case id == "" && kind == "release-group" && q.Get("artist") != "":
 		browseReleaseGroups(w, q)
@@ -163,7 +172,7 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{"id": ArtistMany, "name": "Many Albums Ensemble", "sort-name": "Ensemble, Many Albums"})
 	case kind == "artist" && id == ArtistHuge:
 		writeJSON(w, map[string]any{"id": ArtistHuge, "name": "Huge Catalogue Orchestra", "sort-name": "Orchestra, Huge Catalogue"})
-	case kind == "artist" || kind == "release-group" || kind == "release":
+	case kind == "artist" || kind == "release-group" || kind == "release" || kind == "recording":
 		serveFile(w, kind+"_"+id+".json")
 	default:
 		notFound(w)

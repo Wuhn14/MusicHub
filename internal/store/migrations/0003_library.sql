@@ -1,0 +1,25 @@
+CREATE TABLE files (
+    id             TEXT PRIMARY KEY,
+    path           TEXT NOT NULL UNIQUE,
+    origin         TEXT NOT NULL DEFAULT 'dropped',
+    size           INTEGER NOT NULL DEFAULT 0,
+    mtime          INTEGER NOT NULL DEFAULT 0,
+    format         TEXT NOT NULL DEFAULT '',
+    codec          TEXT NOT NULL DEFAULT '',
+    bitrate        INTEGER NOT NULL DEFAULT 0,
+    sample_rate    INTEGER NOT NULL DEFAULT 0,
+    duration_ms    INTEGER NOT NULL DEFAULT 0,
+    lossless       INTEGER NOT NULL DEFAULT 0,
+    tags_json      TEXT NOT NULL DEFAULT '{}',
+    status         TEXT NOT NULL DEFAULT 'pending',
+    prev_status    TEXT NOT NULL DEFAULT '',
+    recording_id   TEXT NOT NULL DEFAULT '',
+    album_id       TEXT NOT NULL DEFAULT '',
+    local_track_id TEXT NOT NULL DEFAULT '',
+    disc           INTEGER NOT NULL DEFAULT 0,
+    position       INTEGER NOT NULL DEFAULT 0,
+    last_seen      TEXT NOT NULL DEFAULT '',
+    missing_since  TEXT NOT NULL DEFAULT '',
+    added_at       TEXT NOT NULL
+);
+CREATE INDEX files_status ON files(status);

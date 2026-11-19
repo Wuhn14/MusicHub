@@ -36,6 +36,9 @@ const (
 	// artist with a huge catalogue cannot turn one page view into dozens of
 	// rate-limited requests.
 	maxArtistPages = 5
+	// maxDrain bounds how much of an error body is read (and discarded) so
+	// the connection can be reused.
+	maxDrain = 1 << 20
 )
 
 // TrackHit is a recording found by SearchTracks, with the album it appears on.
@@ -144,13 +147,13 @@ func (c *Client) do(ctx context.Context, u string, out any) (bool, error) {
 	defer resp.Body.Close()
 	switch {
 	case resp.StatusCode >= 500 || resp.StatusCode == http.StatusTooManyRequests:
-		_, _ = io.Copy(io.Discard, resp.Body)
+		_, _ = io.CopyN(io.Discard, resp.Body, maxDrain)
 		return true, ErrUnavailable
 	case resp.StatusCode == http.StatusNotFound:
-		_, _ = io.Copy(io.Discard, resp.Body)
+		_, _ = io.CopyN(io.Discard, resp.Body, maxDrain)
 		return false, ErrNotFound
 	case resp.StatusCode < 200 || resp.StatusCode > 299:
-		_, _ = io.Copy(io.Discard, resp.Body)
+		_, _ = io.CopyN(io.Discard, resp.Body, maxDrain)
 		return false, fmt.Errorf("musicbrainz: unexpected status %s", resp.Status)
 	}
 	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
@@ -455,4 +458,122 @@ func (c *Client) GetAlbum(ctx context.Context, id string) (store.Album, error) {
 		}
 	}
 	return album, nil
+}
+
+// --- Recordings ---
+
+// RecordingQuery describes a recording to look for by its tags. Album is
+// optional.
+type RecordingQuery struct {
+	Artist, Title, Album string
+}
+
+// ReleaseRef is a release a recording appears on, with its release group.
+// Disc and Position are 0 when MusicBrainz does not say.
+type ReleaseRef struct {
+	ReleaseGroupID, Title, PrimaryType string
+	SecondaryTypes                     []string
+	Date                               string
+	Disc, Position                     int
+}
+
+// RecordingHit is a recording with the releases it appears on. Score is the
+// MusicBrainz search score (0-100), 0 for a lookup.
+type RecordingHit struct {
+	RecordingID, Title, ArtistName string
+	LengthMs, Score                int
+	Releases                       []ReleaseRef
+}
+
+type jsonRecording struct {
+	ID           string       `json:"id"`
+	Title        string       `json:"title"`
+	Length       int          `json:"length"`
+	Score        int          `json:"score"`
+	ArtistCredit []jsonCredit `json:"artist-credit"`
+	Releases     []struct {
+		Title        string `json:"title"`
+		Date         string `json:"date"`
+		ReleaseGroup struct {
+			ID             string   `json:"id"`
+			Title          string   `json:"title"`
+			PrimaryType    string   `json:"primary-type"`
+			SecondaryTypes []string `json:"secondary-types"`
+		} `json:"release-group"`
+		// A search lists in the medium only the matching track and gives its
+		// zero-based track-offset; a lookup with inc=media gives the track
+		// itself in "tracks". Both are understood.
+		Media []struct {
+			Position    int  `json:"position"`
+			TrackOffset *int `json:"track-offset"`
+			Tracks      []struct {
+				Position int `json:"position"`
+			} `json:"tracks"`
+		} `json:"media"`
+	} `json:"releases"`
+}
+
+func (r jsonRecording) hit() RecordingHit {
+	h := RecordingHit{
+		RecordingID: r.ID, Title: r.Title, ArtistName: joinCredits(r.ArtistCredit),
+		LengthMs: r.Length, Score: r.Score, Releases: []ReleaseRef{},
+	}
+	for _, rel := range r.Releases {
+		ref := ReleaseRef{
+			ReleaseGroupID: rel.ReleaseGroup.ID, Title: rel.ReleaseGroup.Title,
+			PrimaryType: rel.ReleaseGroup.PrimaryType, SecondaryTypes: rel.ReleaseGroup.SecondaryTypes,
+			Date: rel.Date,
+		}
+		if ref.Title == "" {
+			ref.Title = rel.Title
+		}
+		if len(rel.Media) > 0 {
+			m := rel.Media[0]
+			switch {
+			case m.TrackOffset != nil:
+				ref.Disc, ref.Position = m.Position, *m.TrackOffset+1
+			case len(m.Tracks) > 0:
+				ref.Disc, ref.Position = m.Position, m.Tracks[0].Position
+			}
+		}
+		h.Releases = append(h.Releases, ref)
+	}
+	return h
+}
+
+// FindRecordings searches recordings by artist, title and optionally album
+// (a fielded query; values are matched as phrases), best score first.
+func (c *Client) FindRecordings(ctx context.Context, q RecordingQuery, limit int) ([]RecordingHit, error) {
+	if strings.TrimSpace(q.Title) == "" || strings.TrimSpace(q.Artist) == "" {
+		return []RecordingHit{}, nil
+	}
+	query := `recording:"` + escapePhrase(q.Title) + `" AND artist:"` + escapePhrase(q.Artist) + `"`
+	if q.Album != "" {
+		query += ` AND release:"` + escapePhrase(q.Album) + `"`
+	}
+	var res struct {
+		Recordings []jsonRecording `json:"recordings"`
+	}
+	params := url.Values{"query": {query}, "limit": {strconv.Itoa(limit)}}
+	if err := c.get(ctx, "/recording", params, &res); err != nil {
+		return nil, err
+	}
+	out := make([]RecordingHit, 0, len(res.Recordings))
+	for _, r := range res.Recordings {
+		out = append(out, r.hit())
+	}
+	return out, nil
+}
+
+// GetRecording returns one recording with its releases. The request asks for
+// inc=releases+release-groups+artist-credits+media: with media, each release
+// carries the medium position and the track of this recording, which gives
+// Disc and Position.
+func (c *Client) GetRecording(ctx context.Context, id string) (RecordingHit, error) {
+	var r jsonRecording
+	params := url.Values{"inc": {"releases release-groups artist-credits media"}}
+	if err := c.get(ctx, "/recording/"+url.PathEscape(id), params, &r); err != nil {
+		return RecordingHit{}, err
+	}
+	return r.hit(), nil
 }

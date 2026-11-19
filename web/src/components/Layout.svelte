@@ -1,9 +1,11 @@
 <script lang="ts">
   import type { Snippet } from 'svelte';
+  import PlayerBar from './PlayerBar.svelte';
+  import { identifyCount } from '../lib/identify.svelte';
 
   interface Props {
     /** Navigation entry to highlight, if any. */
-    active: 'home' | 'search' | null;
+    active: 'home' | 'search' | 'library' | 'upload' | 'identify' | 'settings' | null;
     /** Changes on every navigation; used to reset the scroll position. */
     pageKey: string;
     children: Snippet;
@@ -12,6 +14,10 @@
   let { active, pageKey, children }: Props = $props();
 
   let main = $state<HTMLElement>();
+
+  $effect(() => identifyCount.watch());
+
+  const badge = $derived(identifyCount.count > 99 ? '99+' : String(identifyCount.count));
 
   $effect(() => {
     void pageKey;
@@ -52,6 +58,61 @@
             <span>Recherche</span>
           </a>
         </li>
+        <li>
+          <a
+            href="/library"
+            class:active={active === 'library'}
+            aria-current={active === 'library' ? 'page' : undefined}
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path fill="currentColor" d="M4 4h3v16H4V4Zm5 0h3v16H9V4Zm5.2.6 2.9-.8 3.7 15.6-2.9.8-3.7-15.6Z" />
+            </svg>
+            <span>Bibliothèque</span>
+          </a>
+        </li>
+        <li>
+          <a
+            href="/upload"
+            class:active={active === 'upload'}
+            aria-current={active === 'upload' ? 'page' : undefined}
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path fill="currentColor" d="M11 4h2v7h7v2h-7v7h-2v-7H4v-2h7V4Z" />
+            </svg>
+            <span>Ajouter</span>
+          </a>
+        </li>
+        <li>
+          <a
+            href="/identify"
+            class:active={active === 'identify'}
+            aria-current={active === 'identify' ? 'page' : undefined}
+            aria-label={identifyCount.count > 0 ? `À identifier, ${identifyCount.count} fichier${identifyCount.count > 1 ? 's' : ''}` : undefined}
+          >
+            <span class="icon-wrap">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path
+                  fill="currentColor"
+                  d="M11.95 18q.53 0 .9-.37t.37-.9-.37-.9-.9-.37-.9.37-.37.9.37.9.9.37Zm-.92-3.85h1.85q0-.82.19-1.3.19-.48 1.06-1.3.65-.65 1.03-1.24.38-.59.38-1.41 0-1.4-1.03-2.15T12.1 6q-1.43 0-2.31.75T8.55 8.55l1.65.65q.13-.48.6-1.04.47-.56 1.43-.56.85 0 1.28.47.43.47.43 1.03 0 .53-.32 1-.32.47-.8.88-1.1.98-1.35 1.48-.25.5-.25 1.69ZM12 22q-2.08 0-3.9-.79t-3.18-2.14Q3.58 17.73 2.79 15.9 2 14.08 2 12t.79-3.9q.79-1.83 2.14-3.18Q6.27 3.58 8.1 2.79 9.92 2 12 2t3.9.79q1.83.79 3.18 2.14 1.35 1.35 2.14 3.18Q22 9.92 22 12t-.79 3.9q-.79 1.83-2.14 3.18-1.35 1.35-3.18 2.14Q14.08 22 12 22Z"
+                />
+              </svg>
+              {#if identifyCount.count > 0}
+                <span class="badge" aria-hidden="true">{badge}</span>
+              {/if}
+            </span>
+            <span>À identifier</span>
+          </a>
+        </li>
+        <li class="settings-item">
+          <a
+            href="/settings"
+            class:active={active === 'settings'}
+            aria-current={active === 'settings' ? 'page' : undefined}
+          >
+            {@render gear()}
+            <span>Réglages</span>
+          </a>
+        </li>
       </ul>
     </nav>
   </aside>
@@ -60,38 +121,31 @@
     <div class="mobile-brand">
       <span class="logo" aria-hidden="true"></span>
       <span>MusicHub</span>
+      <a
+        class="mobile-settings"
+        href="/settings"
+        aria-label="Réglages"
+        aria-current={active === 'settings' ? 'page' : undefined}
+      >
+        {@render gear()}
+      </a>
     </div>
     <div class="page">
       {@render children()}
     </div>
   </main>
 
-  <footer class="player" aria-label="Lecteur">
-    <div class="now">
-      <div class="art" aria-hidden="true">
-        <svg viewBox="0 0 24 24">
-          <path fill="currentColor" d="M12 3v10.55A4 4 0 1 0 14 17V7h4V3h-6Z" />
-        </svg>
-      </div>
-      <div class="now-text">
-        <p class="now-title">Aucune lecture en cours</p>
-        <p class="now-sub">Choisis un album pour commencer</p>
-      </div>
-    </div>
-    <div class="controls" aria-hidden="true">
-      <span class="ctrl">
-        <svg viewBox="0 0 24 24"><path fill="currentColor" d="M6 6h2v12H6V6Zm3.5 6 8.5 6V6l-8.5 6Z" /></svg>
-      </span>
-      <span class="ctrl play">
-        <svg viewBox="0 0 24 24"><path fill="currentColor" d="M8 5v14l11-7L8 5Z" /></svg>
-      </span>
-      <span class="ctrl">
-        <svg viewBox="0 0 24 24"><path fill="currentColor" d="M16 6h2v12h-2V6ZM6 18l8.5-6L6 6v12Z" /></svg>
-      </span>
-    </div>
-    <div class="spacer"></div>
-  </footer>
+  <PlayerBar />
 </div>
+
+{#snippet gear()}
+  <svg viewBox="0 0 24 24" aria-hidden="true">
+    <path
+      fill="currentColor"
+      d="M19.43 12.98c.04-.32.07-.64.07-.98s-.03-.66-.07-.98l2.11-1.65a.5.5 0 0 0 .12-.64l-2-3.46a.5.5 0 0 0-.61-.22l-2.49 1a7.3 7.3 0 0 0-1.69-.98l-.38-2.65A.49.49 0 0 0 14 2h-4a.49.49 0 0 0-.49.42l-.38 2.65c-.61.25-1.17.59-1.69.98l-2.49-1a.5.5 0 0 0-.61.22l-2 3.46a.5.5 0 0 0 .12.64l2.11 1.65c-.04.32-.07.65-.07.98s.03.66.07.98l-2.11 1.65a.5.5 0 0 0-.12.64l2 3.46c.13.22.39.3.61.22l2.49-1c.52.4 1.08.73 1.69.98l.38 2.65c.03.24.24.42.49.42h4c.25 0 .46-.18.49-.42l.38-2.65c.61-.25 1.17-.59 1.69-.98l2.49 1c.23.09.49 0 .61-.22l2-3.46a.5.5 0 0 0-.12-.64l-2.11-1.65ZM12 15.5A3.5 3.5 0 1 1 12 8.5a3.5 3.5 0 0 1 0 7Z"
+    />
+  </svg>
+{/snippet}
 
 <style>
   .shell {
@@ -201,6 +255,28 @@
     flex: none;
   }
 
+  .icon-wrap {
+    position: relative;
+    display: flex;
+    flex: none;
+  }
+
+  .badge {
+    position: absolute;
+    top: -6px;
+    right: -10px;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 5px;
+    border-radius: 999px;
+    background: var(--accent);
+    color: var(--on-accent);
+    font-size: 0.68rem;
+    font-weight: 800;
+    line-height: 18px;
+    text-align: center;
+  }
+
   .main {
     grid-area: main;
     overflow-y: auto;
@@ -216,87 +292,6 @@
   .page {
     max-width: 1400px;
     padding: 32px;
-  }
-
-  .player {
-    grid-area: player;
-    display: grid;
-    grid-template-columns: 1fr auto 1fr;
-    align-items: center;
-    gap: 16px;
-    padding: 0 16px;
-    background: var(--bg-sidebar);
-  }
-
-  .now {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    min-width: 0;
-  }
-
-  .art {
-    flex: none;
-    display: grid;
-    place-items: center;
-    width: 48px;
-    height: 48px;
-    border-radius: 6px;
-    background: var(--surface);
-    color: var(--text-faint);
-  }
-
-  .art svg {
-    width: 22px;
-    height: 22px;
-  }
-
-  .now-text {
-    min-width: 0;
-  }
-
-  .now-title,
-  .now-sub {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .now-title {
-    font-size: 0.875rem;
-    font-weight: 600;
-    color: var(--text-muted);
-  }
-
-  .now-sub {
-    font-size: 0.75rem;
-    color: var(--text-faint);
-  }
-
-  .controls {
-    display: flex;
-    align-items: center;
-    gap: 16px;
-    color: var(--text-faint);
-  }
-
-  .ctrl {
-    display: grid;
-    place-items: center;
-    width: 32px;
-    height: 32px;
-  }
-
-  .ctrl svg {
-    width: 20px;
-    height: 20px;
-  }
-
-  .ctrl.play {
-    width: 36px;
-    height: 36px;
-    border-radius: 50%;
-    background: var(--surface-hover);
   }
 
   /* Narrow screens: top brand bar, content, player, then a bottom tab bar. */
@@ -333,18 +328,27 @@
       gap: 0;
     }
 
+    /* Equal shares that may shrink below their label: the label ellipsizes
+       instead of pushing the bar wider than the screen. */
     nav li {
-      flex: 1;
+      flex: 1 1 0;
+      min-width: 0;
+    }
+
+    /* Settings move to the top bar on phones to keep five readable tabs. */
+    .settings-item {
+      display: none;
     }
 
     nav a {
       height: 100%;
+      min-width: 0;
       flex-direction: column;
       justify-content: center;
       gap: 2px;
-      padding: 6px;
+      padding: 6px 2px;
       border-radius: 0;
-      font-size: 0.75rem;
+      font-size: 0.72rem;
       font-weight: 600;
     }
 
@@ -353,14 +357,47 @@
       background: transparent;
     }
 
+    nav a > span:last-child {
+      max-width: 100%;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .badge {
+      right: -12px;
+    }
+
     .main {
       border-radius: 0;
     }
 
     .mobile-brand {
       display: flex;
+      align-items: center;
       padding: 16px 16px 0;
       font-size: 1.15rem;
+    }
+
+    .mobile-settings {
+      display: grid;
+      place-items: center;
+      width: 40px;
+      height: 40px;
+      margin: -8px -8px -8px auto;
+      border-radius: 50%;
+      color: var(--text-muted);
+    }
+
+    .mobile-settings:hover,
+    .mobile-settings:focus-visible,
+    .mobile-settings[aria-current='page'] {
+      color: var(--accent);
+    }
+
+    .mobile-settings svg {
+      width: 22px;
+      height: 22px;
     }
 
     .mobile-brand .logo {
@@ -370,25 +407,6 @@
 
     .page {
       padding: 16px;
-    }
-
-    .player {
-      grid-template-columns: minmax(0, 1fr) auto;
-      height: 64px;
-      margin: 0 8px 6px;
-      padding: 0 8px;
-      border-radius: var(--radius);
-      background: var(--surface);
-    }
-
-    .art {
-      width: 40px;
-      height: 40px;
-    }
-
-    .controls .ctrl:not(.play),
-    .spacer {
-      display: none;
     }
   }
 </style>

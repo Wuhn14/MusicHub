@@ -19,6 +19,24 @@ func secure(next http.Handler) http.Handler {
 	})
 }
 
+// sameSiteWrites refuses the API writes a browser sends on behalf of another
+// site (a form or script on a page elsewhere targeting MusicHub). Browsers
+// mark such requests with Sec-Fetch-Site: cross-site; requests without the
+// header (command-line tools, older browsers) go through.
+func sameSiteWrites(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead &&
+			r.Header.Get("Sec-Fetch-Site") == "cross-site" {
+			w.Header().Set("Content-Type", "application/json; charset=utf-8")
+			w.Header().Set("Cache-Control", "no-store")
+			w.WriteHeader(http.StatusForbidden)
+			w.Write([]byte(`{"error":"Requête refusée."}` + "\n"))
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 // New routes /healthz, sends /api/ to api and everything else to ui.
 func New(api http.Handler, ui http.Handler) http.Handler {
 	mux := http.NewServeMux()
@@ -26,7 +44,7 @@ func New(api http.Handler, ui http.Handler) http.Handler {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte(`{"ok":true}`))
 	})
-	mux.Handle("/api/", api)
+	mux.Handle("/api/", sameSiteWrites(api))
 	mux.Handle("/", ui)
 	return secure(mux)
 }

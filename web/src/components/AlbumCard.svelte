@@ -2,23 +2,43 @@
   import type { AlbumSummary } from '../lib/api';
   import { albumMeta } from '../lib/format';
   import Cover from './Cover.svelte';
+  import Icon from './Icon.svelte';
 
   interface Props {
     album: AlbumSummary;
     /** Show the artist name in the subtitle (hidden on the artist page). */
     showArtist?: boolean;
+    /** Overrides the link target (default: the catalog album page). */
+    href?: string;
+    /** Overrides the id used for the cover (empty shows the placeholder). */
+    coverId?: string;
+    /** When set, a play button is shown over the cover. */
+    onplay?: () => void;
+    /** Short label shown over the cover, such as « Dans ta bibliothèque ». */
+    badge?: string;
   }
 
-  let { album, showArtist = true }: Props = $props();
+  let { album, showArtist = true, href, coverId, onplay, badge }: Props = $props();
 
   const meta = $derived(albumMeta(album.firstReleaseDate, album.primaryType, album.secondaryTypes));
 </script>
 
 <li class="card">
-  <a class="link" href="/album/{album.id}">
-    <Cover albumId={album.id} size={250} alt="Pochette de {album.title}" />
+  <a class="link" href={href ?? `/album/${album.id}`}>
+    <Cover albumId={coverId ?? album.id} size={250} alt="Pochette de {album.title}" />
     <span class="title" title={album.title}>{album.title}</span>
+    {#if badge}
+      <span class="badge">{badge}</span>
+    {/if}
   </a>
+  {#if onplay}
+    <!-- Overlay matching the square cover, so the button sits on its corner. -->
+    <div class="over-cover">
+      <button type="button" class="play" aria-label="Lire {album.title}" onclick={onplay}>
+        <Icon name="play" size={22} />
+      </button>
+    </div>
+  {/if}
   <p class="sub">
     {#if showArtist && album.artistName}
       {#if album.artistId}
@@ -69,6 +89,24 @@
     white-space: nowrap;
   }
 
+  /* Over the top-left corner of the cover (the link starts at the cover). */
+  .badge {
+    position: absolute;
+    top: 20px;
+    left: 20px;
+    max-width: calc(100% - 40px);
+    padding: 3px 9px;
+    border-radius: 999px;
+    background: var(--accent);
+    color: var(--on-accent);
+    font-size: 0.7rem;
+    font-weight: 700;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    box-shadow: 0 4px 10px rgb(0 0 0 / 0.4);
+  }
+
   .sub {
     margin-top: 2px;
     font-size: 0.875rem;
@@ -80,5 +118,56 @@
 
   .sub a:hover {
     color: var(--text);
+  }
+
+  /* Play button over the bottom-right corner of the cover. */
+  .over-cover {
+    position: absolute;
+    top: 12px;
+    left: 12px;
+    right: 12px;
+    aspect-ratio: 1;
+    pointer-events: none;
+  }
+
+  .play {
+    position: absolute;
+    right: 8px;
+    bottom: 8px;
+    pointer-events: auto;
+    display: grid;
+    place-items: center;
+    width: 46px;
+    height: 46px;
+    padding: 0;
+    border: 0;
+    border-radius: 50%;
+    background: var(--accent);
+    color: var(--on-accent);
+    box-shadow: 0 8px 16px rgb(0 0 0 / 0.45);
+    cursor: pointer;
+    opacity: 0;
+    transform: translateY(8px);
+    transition: opacity 0.2s ease, transform 0.2s ease, background-color 0.15s ease;
+  }
+
+  .card:hover .play,
+  .card:focus-within .play {
+    opacity: 1;
+    transform: none;
+  }
+
+  .play:hover {
+    background: var(--accent-strong);
+    transform: scale(1.05) !important;
+  }
+
+  @media (hover: none) {
+    .play {
+      opacity: 1;
+      transform: none;
+      width: 40px;
+      height: 40px;
+    }
   }
 </style>

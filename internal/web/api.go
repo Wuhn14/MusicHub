@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io/fs"
 	"log/slog"
+	"mime"
 	"net/http"
 	"os"
 	"regexp"
@@ -41,23 +42,96 @@ type CoverGetter interface {
 	Get(ctx context.Context, albumID string, size int) (string, error)
 }
 
+// Deps are the services the API routes depend on. A nil field makes the
+// routes that need it answer 503, so a partially wired server still starts.
+type Deps struct {
+	Catalog  CatalogReader
+	Covers   CoverGetter
+	Settings SettingsService
+	Tools    ToolStatusReader
+	Library  LibraryReader
+	// Stream serves GET /api/stream/{fileId}; it reads the path value itself.
+	Stream       http.Handler
+	Availability AvailabilityReader
+	Identify     IdentifyStatusReader
+	Upload       UploadReceiver
+	Files        FileReader
+	// IdentifyActions and IdentifyStore serve the "À identifier" routes;
+	// LocalCoversDir is where the covers of local tracks are stored.
+	IdentifyActions IdentifyActions
+	IdentifyStore   IdentifyStore
+	LocalCoversDir  string
+	// IncomingDir is where uploads wait; only files inside it can be deleted.
+	IncomingDir string
+}
+
 type api struct {
-	cat    CatalogReader
-	covers CoverGetter
+	cat      CatalogReader
+	covers   CoverGetter
+	settings SettingsService
+	tools    ToolStatusReader
+	lib      LibraryReader
+	avail    AvailabilityReader
+	identify IdentifyStatusReader
+	uploads  UploadReceiver
+	files    FileReader
+
+	idActions   IdentifyActions
+	idStore     IdentifyStore
+	coversDir   string
+	incomingDir string
 }
 
 // NewAPI returns the handler serving every /api route.
-func NewAPI(cat CatalogReader, covers CoverGetter) http.Handler {
-	a := &api{cat: cat, covers: covers}
+func NewAPI(d Deps) http.Handler {
+	a := &api{cat: d.Catalog, covers: d.Covers, settings: d.Settings, tools: d.Tools, lib: d.Library,
+		avail: d.Availability, identify: d.Identify, uploads: d.Upload, files: d.Files,
+		idActions: d.IdentifyActions, idStore: d.IdentifyStore, coversDir: d.LocalCoversDir,
+		incomingDir: d.IncomingDir}
+	canAct := d.IdentifyActions != nil && d.IdentifyStore != nil
+	hasCovers := d.IdentifyStore != nil && d.LocalCoversDir != ""
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /api/search", a.search)
-	mux.HandleFunc("GET /api/artists/{id}", a.artist)
-	mux.HandleFunc("GET /api/albums/{id}", a.album)
-	mux.HandleFunc("GET /api/covers/{id}", a.cover)
+	mux.HandleFunc("GET /api/search", requires(d.Catalog != nil, a.search))
+	mux.HandleFunc("GET /api/artists/{id}", requires(d.Catalog != nil, a.artist))
+	mux.HandleFunc("GET /api/albums/{id}", requires(d.Catalog != nil, a.album))
+	mux.HandleFunc("GET /api/covers/{id}", requires(d.Covers != nil, a.cover))
+	mux.HandleFunc("GET /api/settings", requires(d.Settings != nil, a.getSettings))
+	mux.HandleFunc("PUT /api/settings", requires(d.Settings != nil, a.putSettings))
+	mux.HandleFunc("GET /api/system", requires(d.Tools != nil, a.system))
+	mux.HandleFunc("GET /api/library/albums", requires(d.Library != nil, a.libAlbums))
+	mux.HandleFunc("GET /api/library/albums/{key}", requires(d.Library != nil, a.libAlbum))
+	mux.HandleFunc("GET /api/library/artists", requires(d.Library != nil, a.libArtists))
+	mux.HandleFunc("GET /api/library/tracks", requires(d.Library != nil, a.libTracks))
+	mux.HandleFunc("GET /api/library/status", requires(d.Library != nil, a.libStatus))
+	mux.HandleFunc("POST /api/library/scan", requires(d.Library != nil, a.libScan))
+	mux.HandleFunc("GET /api/library/availability", requires(d.Availability != nil, a.availability))
+	mux.HandleFunc("GET /api/identify/status", requires(d.Identify != nil, a.identifyStatus))
+	mux.HandleFunc("GET /api/identify", requires(d.IdentifyStore != nil, a.identifyList))
+	mux.HandleFunc("GET /api/identify/count", requires(d.IdentifyStore != nil, a.identifyCount))
+	mux.HandleFunc("POST /api/identify/{fileId}/choose", requires(canAct, a.identifyChoose))
+	mux.HandleFunc("POST /api/identify/{fileId}/local", requires(canAct, a.identifyLocal))
+	mux.HandleFunc("POST /api/identify/{fileId}/cover", requires(hasCovers, a.identifyCover))
+	mux.HandleFunc("DELETE /api/identify/{fileId}", requires(d.IdentifyStore != nil, a.identifyDelete))
+	mux.HandleFunc("GET /api/local-covers/{id}", requires(hasCovers, a.localCover))
+	mux.HandleFunc("POST /api/uploads", requires(d.Upload != nil, a.upload))
+	mux.HandleFunc("GET /api/files/{id}", requires(d.Files != nil, a.fileStatus))
+	mux.HandleFunc("GET /api/stream/{fileId}", requires(d.Stream != nil, func(w http.ResponseWriter, r *http.Request) {
+		d.Stream.ServeHTTP(w, r)
+	}))
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "Introuvable.")
 	})
 	return mux
+}
+
+// requires returns h when its dependency is wired, and a 503 handler otherwise.
+func requires(ok bool, h http.HandlerFunc) http.HandlerFunc {
+	if ok {
+		return h
+	}
+	return func(w http.ResponseWriter, _ *http.Request) {
+		writeError(w, http.StatusServiceUnavailable, "Fonction indisponible.")
+	}
 }
 
 // JSON response shapes (camelCase, never serialising store structs directly).
@@ -258,6 +332,18 @@ func fail(w http.ResponseWriter, r *http.Request, err error) {
 		}
 		writeError(w, http.StatusInternalServerError, "Erreur interne.")
 	}
+}
+
+// requireJSON answers 415 unless the request body is declared as JSON. A
+// cross-site form cannot send that type without a preflight the browser
+// would refuse.
+func requireJSON(w http.ResponseWriter, r *http.Request) bool {
+	mt, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if err != nil || mt != "application/json" {
+		writeError(w, http.StatusUnsupportedMediaType, "Le corps de la requête doit être du JSON.")
+		return false
+	}
+	return true
 }
 
 func writeError(w http.ResponseWriter, status int, msg string) {

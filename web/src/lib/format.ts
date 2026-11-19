@@ -11,15 +11,19 @@ export function formatDuration(ms: number): string {
   return `${minutes}:${String(seconds).padStart(2, '0')}`;
 }
 
-/** Formats a total running time, e.g. "42 min" or "1 h 05 min". */
+/** Formats a total running time: "45 s", "1 min 30 s" or "1 h 05 min". */
 export function formatTotal(ms: number): string {
   if (!Number.isFinite(ms) || ms <= 0) {
     return '';
   }
-  const minutes = Math.round(ms / 60000);
-  if (minutes < 60) {
-    return `${minutes} min`;
+  const seconds = Math.round(ms / 1000);
+  if (seconds < 60) {
+    return `${seconds} s`;
   }
+  if (seconds < 3600) {
+    return `${Math.floor(seconds / 60)} min ${String(seconds % 60).padStart(2, '0')} s`.replace(' 00 s', '');
+  }
+  const minutes = Math.round(seconds / 60);
   return `${Math.floor(minutes / 60)} h ${String(minutes % 60).padStart(2, '0')} min`;
 }
 
@@ -72,4 +76,13 @@ export function countryName(code: string): string {
   } catch {
     return code;
   }
+}
+
+/** Formats a position in seconds as m:ss (0:00 included), for the player. */
+export function formatClock(seconds: number): string {
+  const total = Number.isFinite(seconds) && seconds > 0 ? Math.floor(seconds) : 0;
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = String(total % 60).padStart(2, '0');
+  return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${s}` : `${m}:${s}`;
 }

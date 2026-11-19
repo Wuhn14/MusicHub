@@ -23,13 +23,17 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
     go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /out/musichub ./cmd/musichub \
     && mkdir -p /out/data /out/music
 
-# Stage 3: minimal runtime image, running as the non-root user (uid 65532).
-FROM gcr.io/distroless/static-debian12:nonroot
+# Stage 3: runtime image. Alpine provides ffmpeg/ffprobe and fpcalc (Chromaprint),
+# which MusicHub runs as sub-processes. It runs as the non-root user musichub (65532).
+FROM alpine:3.22
+RUN apk add --no-cache ffmpeg chromaprint ca-certificates tzdata \
+    && addgroup -g 65532 -S musichub \
+    && adduser -u 65532 -S -G musichub -H -h /data -s /sbin/nologin musichub
 COPY --from=build /out/musichub /usr/local/bin/musichub
 COPY --from=build --chown=65532:65532 /out/data /data
 COPY --from=build --chown=65532:65532 /out/music /music
 ENV MUSICHUB_DATA=/data \
     MUSICHUB_MUSIC=/music
 EXPOSE 8080
-USER nonroot:nonroot
+USER 65532:65532
 ENTRYPOINT ["/usr/local/bin/musichub"]

@@ -1,7 +1,9 @@
 <script lang="ts">
-  import { errorMessage, getAlbum, isAbort, type Album, type Track } from '../lib/api';
+  import { errorMessage, getAlbum, getAlbumAvailability, isAbort, type Album, type Track } from '../lib/api';
   import { formatDuration, formatTotal, typeLabel, yearOf } from '../lib/format';
+  import { player, type PlayableTrack } from '../lib/player.svelte';
   import Cover from '../components/Cover.svelte';
+  import Icon from '../components/Icon.svelte';
   import Status from '../components/Status.svelte';
 
   interface Props {
@@ -13,12 +15,21 @@
   let album = $state<Album | null>(null);
   let loading = $state(true);
   let error = $state('');
+  /** Recording id → library file id, for the tracks the library can play. */
+  let available = $state<Record<string, string>>({});
 
   $effect(() => {
     const controller = new AbortController();
     album = null;
     error = '';
     loading = true;
+    available = {};
+    // Availability is a bonus: when it fails the album still shows, greyed.
+    getAlbumAvailability(id, controller.signal)
+      .then((res) => {
+        available = res.tracks;
+      })
+      .catch(() => {});
     getAlbum(id, controller.signal)
       .then((res) => {
         album = res;
@@ -45,6 +56,32 @@
       .sort(([a], [b]) => a - b)
       .map(([disc, tracks]) => ({ disc, tracks: tracks.sort((a, b) => a.position - b.position) }));
   });
+
+  /** The playable tracks, in album order: the queue built by a click. */
+  const playableTracks = $derived(discs.flatMap((d) => d.tracks).filter((t) => available[t.recordingId]));
+
+  const currentId = $derived(player.current?.track.fileId ?? '');
+
+  function toPlayable(t: Track): PlayableTrack {
+    return {
+      fileId: available[t.recordingId],
+      title: t.title,
+      artist: album?.artistName ?? '',
+      album: album?.title ?? '',
+      coverUrl: album ? `/api/covers/${encodeURIComponent(album.id)}` : '',
+      durationMs: t.lengthMs > 0 ? t.lengthMs : 0,
+    };
+  }
+
+  /** Plays the album's playable tracks from t (from the first when null). */
+  function play(t: Track | null): void {
+    if (t && available[t.recordingId] === currentId) {
+      player.toggle();
+      return;
+    }
+    const start = t ? playableTracks.indexOf(t) : 0;
+    player.playList(playableTracks.map(toPlayable), Math.max(0, start));
+  }
 
   const totalMs = $derived((album?.tracks ?? []).reduce((sum, t) => sum + (t.lengthMs > 0 ? t.lengthMs : 0), 0));
 
@@ -87,6 +124,19 @@
           </span>
         {/if}
       </p>
+      {#if playableTracks.length > 0}
+        <div class="actions">
+          <button type="button" class="play-all" onclick={() => play(null)}>
+            <Icon name="play" size={20} />
+            Lire
+          </button>
+          <span class="owned">
+            {playableTracks.length === album.tracks.length
+              ? 'Dans ta bibliothèque'
+              : `${playableTracks.length} sur ${album.tracks.length} dans ta bibliothèque`}
+          </span>
+        </div>
+      {/if}
     </div>
   </header>
 
@@ -112,18 +162,52 @@
         {/if}
         <ol class="tracks" aria-label={discs.length > 1 ? `Disque ${disc}` : 'Titres'}>
           {#each tracks as track, i (track.recordingId + ':' + i)}
-            <li class="row">
-              <span class="num">{track.position}</span>
-              <span class="title">
-                <span class="title-text">{track.title}</span>
-                <span class="title-artist">{album.artistName}</span>
-              </span>
-              <span class="duration">
-                {#if track.lengthMs > 0}
-                  <span class="visually-hidden">Durée </span>{formatDuration(track.lengthMs)}
-                {/if}
-              </span>
-            </li>
+            {@const fileId = available[track.recordingId]}
+            {#if fileId}
+              {@const current = fileId === currentId}
+              <li class="row available" class:current aria-current={current ? 'true' : undefined}>
+                <button
+                  type="button"
+                  class="main"
+                  aria-label={current
+                    ? `${player.playing ? 'Mettre en pause' : 'Reprendre'} ${track.title}`
+                    : `Lire ${track.title}`}
+                  onclick={() => play(track)}
+                >
+                  <span class="num">
+                    <span class="n">{track.position}</span>
+                    <span class="play-icon" aria-hidden="true">
+                      <Icon name={current && player.playing ? 'pause' : 'play'} size={16} />
+                    </span>
+                  </span>
+                  <span class="title">
+                    <span class="title-text">{track.title}</span>
+                    <span class="title-artist">{album.artistName}</span>
+                  </span>
+                  <span class="duration">
+                    {#if track.lengthMs > 0}
+                      <span class="visually-hidden">Durée </span>{formatDuration(track.lengthMs)}
+                    {/if}
+                  </span>
+                </button>
+              </li>
+            {:else}
+              <li class="row unavailable">
+                <div class="main" role="group" aria-disabled="true" title="Pas encore dans ta bibliothèque">
+                  <span class="num">{track.position}</span>
+                  <span class="title">
+                    <span class="title-text">{track.title}</span>
+                    <span class="title-artist">{album.artistName}</span>
+                  </span>
+                  <span class="duration">
+                    {#if track.lengthMs > 0}
+                      <span class="visually-hidden">Durée </span>{formatDuration(track.lengthMs)}
+                    {/if}
+                  </span>
+                  <span class="visually-hidden">(pas encore dans ta bibliothèque)</span>
+                </div>
+              </li>
+            {/if}
           {/each}
         </ol>
       {/each}
@@ -213,8 +297,104 @@
     border-radius: var(--radius);
   }
 
-  li.row:hover {
+  li.row:hover,
+  li.row:focus-within {
     background: var(--surface);
+  }
+
+  /* The row content sits in .main: a button when the track is playable. */
+  li.available,
+  li.unavailable {
+    padding: 0;
+  }
+
+  .main {
+    grid-column: 1 / -1;
+    display: grid;
+    grid-template-columns: subgrid;
+    align-items: center;
+    padding: 8px 16px;
+    border: 0;
+    border-radius: var(--radius);
+    background: none;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+
+  .num {
+    position: relative;
+  }
+
+  .play-icon {
+    position: absolute;
+    right: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    display: none;
+    color: var(--text);
+  }
+
+  li.available:hover .n,
+  .main:focus-visible .n,
+  .current .n {
+    visibility: hidden;
+  }
+
+  li.available:hover .play-icon,
+  .main:focus-visible .play-icon,
+  .current .play-icon {
+    display: block;
+  }
+
+  .current .title-text,
+  .current .play-icon {
+    color: var(--accent);
+  }
+
+  /* Not in the library yet: shown, but greyed and inert. */
+  li.unavailable {
+    opacity: 0.45;
+  }
+
+  li.unavailable .main {
+    cursor: default;
+  }
+
+  li.unavailable:hover {
+    background: none;
+  }
+
+  .actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 16px;
+    margin-top: 6px;
+  }
+
+  .play-all {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 22px;
+    border: 0;
+    border-radius: 999px;
+    background: var(--accent);
+    color: var(--on-accent);
+    font: inherit;
+    font-weight: 700;
+    cursor: pointer;
+  }
+
+  .play-all:hover {
+    background: var(--accent-strong);
+  }
+
+  .owned {
+    color: var(--text-muted);
+    font-size: 0.875rem;
   }
 
   .head {

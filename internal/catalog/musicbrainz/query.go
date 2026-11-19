@@ -20,3 +20,9 @@ func escapeLucene(s string) string {
 	}
 	return b.String()
 }
+
+// escapePhrase escapes a value placed between double quotes in a fielded
+// Lucene query: inside a phrase only the quote and the backslash matter.
+func escapePhrase(s string) string {
+	return strings.NewReplacer("\\", "\\\\", "\"", "\\\"").Replace(s)
+}
